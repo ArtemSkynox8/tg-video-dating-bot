@@ -18,9 +18,14 @@ type Config struct {
 }
 
 func Load() Config {
+	httpAddr := getEnv("HTTP_ADDR", "")
+	if httpAddr == "" {
+		port := getEnv("PORT", "8080")
+		httpAddr = ":" + port
+	}
 	return Config{
 		AppEnv:           getEnv("APP_ENV", "development"),
-		HTTPAddr:         getEnv("HTTP_ADDR", ":8080"),
+		HTTPAddr:         httpAddr,
 		PublicBaseURL:    getEnv("PUBLIC_BASE_URL", "http://localhost:8080"),
 		MaxAPIBaseURL:    getEnv("MAX_API_BASE_URL", "https://platform-api.max.ru"),
 		MaxBotToken:      os.Getenv("MAX_BOT_TOKEN"),
@@ -53,4 +58,3 @@ func splitCSV(value string) []string {
 	}
 	return out
 }
-

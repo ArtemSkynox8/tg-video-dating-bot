@@ -63,6 +63,17 @@ func (c *Client) AnswerCallback(ctx context.Context, callbackID, text string) er
 	return c.post(ctx, "/callbacks/answer", body, nil)
 }
 
+func (c *Client) SubscribeWebhook(ctx context.Context, url, secret string, updateTypes []string) error {
+	body := map[string]any{
+		"url":          url,
+		"update_types": updateTypes,
+	}
+	if secret != "" {
+		body["secret"] = secret
+	}
+	return c.post(ctx, "/subscriptions", body, nil)
+}
+
 func (c *Client) post(ctx context.Context, path string, in any, out any) error {
 	payload, err := json.Marshal(in)
 	if err != nil {
@@ -74,7 +85,7 @@ func (c *Client) post(ctx context.Context, path string, in any, out any) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
+		req.Header.Set("Authorization", c.token)
 	}
 	res, err := c.http.Do(req)
 	if err != nil {
@@ -89,4 +100,3 @@ func (c *Client) post(ctx context.Context, path string, in any, out any) error {
 	}
 	return json.NewDecoder(res.Body).Decode(out)
 }
-

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -34,10 +35,22 @@ func main() {
 
 	repo := repositories.New(pool)
 	maxClient := maxapi.NewClient(cfg.MaxAPIBaseURL, cfg.MaxBotToken)
+	if cfg.MaxBotToken != "" && cfg.PublicBaseURL != "" && cfg.PublicBaseURL != "http://localhost:8080" {
+		webhookURL := strings.TrimRight(cfg.PublicBaseURL, "/") + "/webhook/max"
+		if err := maxClient.SubscribeWebhook(ctx, webhookURL, cfg.MaxWebhookSecret, []string{"message_created", "message_callback", "bot_started"}); err != nil {
+			log.Printf("subscribe max webhook %s: %v", webhookURL, err)
+		} else {
+			log.Printf("max webhook subscribed: %s", webhookURL)
+		}
+	}
 	botService := services.NewDatingService(repo, maxClient)
 	webhook := handlers.NewWebhookHandler(cfg, botService)
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))

@@ -20,7 +20,11 @@ func NewWebhookHandler(cfg config.Config, service *services.DatingService) *Webh
 }
 
 func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if h.cfg.MaxWebhookSecret != "" && r.Header.Get("X-Webhook-Secret") != h.cfg.MaxWebhookSecret {
+	secret := r.Header.Get("X-Max-Bot-Api-Secret")
+	if secret == "" {
+		secret = r.Header.Get("X-Webhook-Secret")
+	}
+	if h.cfg.MaxWebhookSecret != "" && secret != h.cfg.MaxWebhookSecret {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -51,4 +55,3 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("ok"))
 }
-
