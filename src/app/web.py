@@ -20,7 +20,11 @@ _bot_task: asyncio.Task | None = None
 async def startup() -> None:
     global _bot_task
     logging.basicConfig(level=settings.log_level)
-    logging.info("Starting web app and initializing database")
+    logging.info(
+        "Starting web app and initializing database: host=%s ssl=%s",
+        settings.database_host,
+        bool(settings.database_connect_args.get("ssl")),
+    )
     await init_database()
     logging.info("Database initialized")
     bot = create_bot()

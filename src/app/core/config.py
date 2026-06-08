@@ -37,6 +37,10 @@ class Settings(BaseSettings):
         return {}
 
     @property
+    def database_host(self) -> str | None:
+        return urlsplit(self.normalized_database_url).hostname
+
+    @property
     def admin_ids(self) -> set[int]:
         return {
             int(item.strip())
