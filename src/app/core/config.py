@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from pydantic import Field
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -13,6 +15,18 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    @field_validator("database_url")
+    @classmethod
+    def normalize_database_url(cls, value: str) -> str:
+        if value.startswith("postgresql://"):
+            value = value.replace("postgresql://", "postgresql+asyncpg://", 1)
+
+        parts = urlsplit(value)
+        query = dict(parse_qsl(parts.query, keep_blank_values=True))
+        if "sslmode" in query and "ssl" not in query:
+            query["ssl"] = query.pop("sslmode")
+        return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
     @property
     def admin_ids(self) -> set[int]:
@@ -29,4 +43,3 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
-
