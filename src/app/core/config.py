@@ -24,9 +24,15 @@ class Settings(BaseSettings):
 
         parts = urlsplit(value)
         query = dict(parse_qsl(parts.query, keep_blank_values=True))
-        if "sslmode" in query and "ssl" not in query:
-            sslmode = query.pop("sslmode")
-            query["ssl"] = "false" if sslmode == "disable" else "true"
+        if "sslmode" in query:
+            sslmode = query["sslmode"].lower()
+            if sslmode in {"true", "1", "yes", "on"}:
+                query["sslmode"] = "require"
+            elif sslmode in {"false", "0", "no", "off"}:
+                query["sslmode"] = "disable"
+        elif "ssl" in query:
+            ssl = query.pop("ssl").lower()
+            query["sslmode"] = "require" if ssl in {"true", "1", "yes", "on"} else "disable"
         return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
     @property
