@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 
 from fastapi import FastAPI
+import uvicorn
 
 from app.core.config import settings
 from app.main import create_bot, create_dispatcher
@@ -31,3 +33,12 @@ async def shutdown() -> None:
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+def main() -> None:
+    port = int(os.getenv("PORT", "8000"))
+    uvicorn.run("app.web:app", host="0.0.0.0", port=port)
+
+
+if __name__ == "__main__":
+    main()
