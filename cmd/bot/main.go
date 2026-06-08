@@ -28,6 +28,9 @@ func main() {
 		log.Fatalf("connect database: %v", err)
 	}
 	defer pool.Close()
+	if err := db.Migrate(ctx, pool); err != nil {
+		log.Fatalf("migrate database: %v", err)
+	}
 
 	repo := repositories.New(pool)
 	maxClient := maxapi.NewClient(cfg.MaxAPIBaseURL, cfg.MaxBotToken)
@@ -59,4 +62,3 @@ func main() {
 	defer cancel()
 	_ = server.Shutdown(shutdownCtx)
 }
-
