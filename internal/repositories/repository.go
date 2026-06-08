@@ -1,0 +1,248 @@
+package repositories
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	"github.com/ArtemSkynox8/tg-video-dating-bot/internal/models"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+var ErrNotFound = errors.New("not found")
+
+type Repository struct {
+	db *pgxpool.Pool
+}
+
+func New(db *pgxpool.Pool) *Repository {
+	return &Repository{db: db}
+}
+
+func (r *Repository) GetUserByPlatformID(ctx context.Context, platformUserID string) (*models.User, error) {
+	row := r.db.QueryRow(ctx, `
+		select id, platform_user_id, platform_chat_id, coalesce(profile_link, ''), coalesce(username, ''),
+		       coalesce(name, ''), coalesce(gender, ''), coalesce(preferred_gender, ''), is_premium,
+		       status, restricted_until, created_at, updated_at
+		from users where platform_user_id = $1`, platformUserID)
+	return scanUser(row)
+}
+
+func (r *Repository) UpsertPlatformUser(ctx context.Context, user models.User) (*models.User, error) {
+	row := r.db.QueryRow(ctx, `
+		insert into users (platform_user_id, platform_chat_id, profile_link, username, status)
+		values ($1, $2, nullif($3, ''), nullif($4, ''), 'active')
+		on conflict (platform_user_id) do update set
+			platform_chat_id = excluded.platform_chat_id,
+			profile_link = coalesce(excluded.profile_link, users.profile_link),
+			username = coalesce(excluded.username, users.username),
+			updated_at = now()
+		returning id, platform_user_id, platform_chat_id, coalesce(profile_link, ''), coalesce(username, ''),
+		          coalesce(name, ''), coalesce(gender, ''), coalesce(preferred_gender, ''), is_premium,
+		          status, restricted_until, created_at, updated_at`,
+		user.PlatformUserID, user.PlatformChatID, user.ProfileLink, user.Username)
+	return scanUser(row)
+}
+
+func (r *Repository) UpdateProfile(ctx context.Context, userID int64, name, gender, preferredGender string) error {
+	_, err := r.db.Exec(ctx, `
+		update users set name = $2, gender = $3, preferred_gender = $4, updated_at = now()
+		where id = $1`, userID, name, gender, preferredGender)
+	return err
+}
+
+func (r *Repository) SaveVideo(ctx context.Context, userID int64, mediaID, storageURL string, duration int) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `update videos set is_active = false where user_id = $1`, userID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		insert into videos (user_id, platform_media_id, storage_url, duration, is_active)
+		values ($1, $2, nullif($3, ''), $4, true)`, userID, mediaID, storageURL, duration); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (r *Repository) FindCandidate(ctx context.Context, viewerID int64) (*models.Candidate, error) {
+	row := r.db.QueryRow(ctx, `
+		with viewer as (
+			select id, preferred_gender from users where id = $1
+		),
+		priority as (
+			select pq.candidate_user_id, 0 as rank
+			from priority_queue pq
+			where pq.target_user_id = $1 and pq.expires_at > now()
+			order by pq.created_at asc
+			limit 3
+		),
+		pool as (
+			select u.id as candidate_user_id, 1 as rank
+			from users u
+			where u.id <> $1
+		)
+		select v.id, v.user_id, v.platform_media_id, coalesce(v.storage_url, ''), v.duration, v.is_active, v.created_at,
+		       u.id, u.platform_user_id, u.platform_chat_id, coalesce(u.profile_link, ''), coalesce(u.username, ''),
+		       coalesce(u.name, ''), coalesce(u.gender, ''), coalesce(u.preferred_gender, ''), u.is_premium,
+		       u.status, u.restricted_until, u.created_at, u.updated_at
+		from (
+			select * from priority
+			union all
+			select * from pool
+		) ranked
+		join users u on u.id = ranked.candidate_user_id
+		join videos v on v.user_id = u.id and v.is_active = true
+		cross join viewer
+		where u.status = 'active'
+		  and (u.restricted_until is null or u.restricted_until < now())
+		  and (viewer.preferred_gender = 'any' or viewer.preferred_gender = u.gender)
+		  and not exists (select 1 from views where viewer_id = $1 and video_id = v.id)
+		order by ranked.rank asc, u.is_premium desc, random()
+		limit 1`, viewerID)
+	var c models.Candidate
+	if err := row.Scan(
+		&c.ID, &c.UserID, &c.PlatformMediaID, &c.StorageURL, &c.Duration, &c.IsActive, &c.CreatedAt,
+		&c.Owner.ID, &c.Owner.PlatformUserID, &c.Owner.PlatformChatID, &c.Owner.ProfileLink, &c.Owner.Username,
+		&c.Owner.Name, &c.Owner.Gender, &c.Owner.PreferredGender, &c.Owner.IsPremium,
+		&c.Owner.Status, &c.Owner.RestrictedUntil, &c.Owner.CreatedAt, &c.Owner.UpdatedAt,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return &c, nil
+}
+
+func (r *Repository) CreateView(ctx context.Context, viewerID, videoID, viewedUserID int64, action string) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `
+		insert into views (viewer_id, video_id, viewed_user_id, action)
+		values ($1, $2, $3, $4)
+		on conflict (viewer_id, video_id) do nothing`, viewerID, videoID, viewedUserID, action); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		insert into user_action_logs (user_id, action, payload)
+		values ($1, $2, jsonb_build_object('video_id', $3, 'viewed_user_id', $4))`,
+		viewerID, action, videoID, viewedUserID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (r *Repository) CreateLike(ctx context.Context, fromUserID, toUserID int64) (bool, error) {
+	tag, err := r.db.Exec(ctx, `
+		insert into likes (from_user_id, to_user_id)
+		values ($1, $2)
+		on conflict (from_user_id, to_user_id) do nothing`, fromUserID, toUserID)
+	return tag.RowsAffected() > 0, err
+}
+
+func (r *Repository) HasReverseLike(ctx context.Context, fromUserID, toUserID int64) (bool, error) {
+	var ok bool
+	err := r.db.QueryRow(ctx, `
+		select exists(select 1 from likes where from_user_id = $1 and to_user_id = $2)`,
+		toUserID, fromUserID).Scan(&ok)
+	return ok, err
+}
+
+func (r *Repository) CreateMatch(ctx context.Context, user1ID, user2ID int64) error {
+	if user2ID < user1ID {
+		user1ID, user2ID = user2ID, user1ID
+	}
+	_, err := r.db.Exec(ctx, `
+		insert into matches (user1_id, user2_id)
+		values ($1, $2)
+		on conflict (user1_id, user2_id) do nothing`, user1ID, user2ID)
+	return err
+}
+
+func (r *Repository) EnqueuePriority(ctx context.Context, targetUserID, candidateUserID int64) error {
+	_, err := r.db.Exec(ctx, `
+		insert into priority_queue (target_user_id, candidate_user_id, reason, expires_at)
+		values ($1, $2, 'liked_by_candidate', now() + interval '7 days')
+		on conflict (target_user_id, candidate_user_id) do update set
+			expires_at = excluded.expires_at,
+			created_at = now()`, targetUserID, candidateUserID)
+	return err
+}
+
+func (r *Repository) CreateVideoReport(ctx context.Context, reporterID, videoID, reportedUserID int64, reason string) error {
+	_, err := r.db.Exec(ctx, `
+		insert into video_reports (reporter_id, video_id, reported_user_id, reason)
+		values ($1, $2, $3, $4)
+		on conflict (reporter_id, video_id) do nothing`, reporterID, videoID, reportedUserID, reason)
+	return err
+}
+
+func (r *Repository) ApplyReportRestrictions(ctx context.Context, reportedUserID int64) error {
+	var uniqueAll, uniqueWeek int
+	if err := r.db.QueryRow(ctx, `select count(distinct reporter_id) from video_reports where reported_user_id = $1`, reportedUserID).Scan(&uniqueAll); err != nil {
+		return err
+	}
+	if err := r.db.QueryRow(ctx, `select count(distinct reporter_id) from video_reports where reported_user_id = $1 and created_at > now() - interval '7 days'`, reportedUserID).Scan(&uniqueWeek); err != nil {
+		return err
+	}
+	var until *time.Time
+	now := time.Now().UTC()
+	if uniqueWeek >= 30 {
+		t := now.Add(72 * time.Hour)
+		until = &t
+	} else if uniqueAll >= 10 {
+		t := now.Add(24 * time.Hour)
+		until = &t
+	}
+	if until == nil {
+		return nil
+	}
+	_, err := r.db.Exec(ctx, `update users set status = 'restricted', restricted_until = $2, updated_at = now() where id = $1`, reportedUserID, until)
+	return err
+}
+
+func (r *Repository) ListVisibleMatches(ctx context.Context, userID int64) ([]models.User, error) {
+	rows, err := r.db.Query(ctx, `
+		select u.id, u.platform_user_id, u.platform_chat_id, coalesce(u.profile_link, ''), coalesce(u.username, ''),
+		       coalesce(u.name, ''), coalesce(u.gender, ''), coalesce(u.preferred_gender, ''), u.is_premium,
+		       u.status, u.restricted_until, u.created_at, u.updated_at
+		from matches m
+		join users u on u.id = case when m.user1_id = $1 then m.user2_id else m.user1_id end
+		where (m.user1_id = $1 and hidden_by_user1 = false)
+		   or (m.user2_id = $1 and hidden_by_user2 = false)
+		order by m.created_at desc`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	users := []models.User{}
+	for rows.Next() {
+		u, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		users = append(users, *u)
+	}
+	return users, rows.Err()
+}
+
+func scanUser(row pgx.Row) (*models.User, error) {
+	var u models.User
+	if err := row.Scan(&u.ID, &u.PlatformUserID, &u.PlatformChatID, &u.ProfileLink, &u.Username,
+		&u.Name, &u.Gender, &u.PreferredGender, &u.IsPremium, &u.Status, &u.RestrictedUntil,
+		&u.CreatedAt, &u.UpdatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return &u, nil
+}

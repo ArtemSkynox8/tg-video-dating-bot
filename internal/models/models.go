@@ -1,0 +1,49 @@
+package models
+
+import "time"
+
+type User struct {
+	ID             int64
+	PlatformUserID string
+	PlatformChatID string
+	ProfileLink    string
+	Username       string
+	Name           string
+	Gender         string
+	PreferredGender string
+	IsPremium      bool
+	Status         string
+	RestrictedUntil *time.Time
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+type Video struct {
+	ID              int64
+	UserID          int64
+	PlatformMediaID string
+	StorageURL      string
+	Duration        int
+	IsActive        bool
+	CreatedAt       time.Time
+}
+
+type Candidate struct {
+	Video
+	Owner User
+}
+
+const (
+	StatusActive     = "active"
+	StatusBlocked    = "blocked"
+	StatusRestricted = "restricted"
+
+	GenderMale   = "male"
+	GenderFemale = "female"
+	GenderAny    = "any"
+
+	ActionLike   = "like"
+	ActionNext   = "next"
+	ActionReport = "report"
+)
+
