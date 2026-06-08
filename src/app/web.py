@@ -20,9 +20,12 @@ _bot_task: asyncio.Task | None = None
 async def startup() -> None:
     global _bot_task
     logging.basicConfig(level=settings.log_level)
+    logging.info("Starting web app and initializing database")
     await init_database()
+    logging.info("Database initialized")
     bot = create_bot()
     await bot.delete_webhook(drop_pending_updates=False)
+    logging.info("Telegram webhook deleted, starting polling")
     dispatcher = create_dispatcher()
     _bot_task = asyncio.create_task(dispatcher.start_polling(bot))
     _bot_task.add_done_callback(_log_bot_task_result)
