@@ -191,7 +191,25 @@ func convertVideoForMax(ctx context.Context, inputPath string, duration int) (st
 	if err != nil {
 		return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
 	}
+	logConvertedVideo(ctx, outputPath)
 	return outputPath, nil
+}
+
+func logConvertedVideo(ctx context.Context, path string) {
+	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(probeCtx, "ffprobe",
+		"-v", "error",
+		"-show_entries", "stream=codec_type,codec_name",
+		"-of", "compact=p=0:nk=1",
+		path,
+	)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Printf("probe converted video path=%s: %v: %s", path, err, strings.TrimSpace(string(output)))
+		return
+	}
+	log.Printf("converted video streams path=%s streams=%q", path, strings.TrimSpace(string(output)))
 }
 
 var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doctype html>
@@ -463,6 +481,31 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
         return false;
       }
     }
+    async function ensureAudioVideoStream() {
+      if (stream) return true;
+      try {
+        stream = await getUserMediaCompat({
+          video: { facingMode: "user" },
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+        });
+        preview.srcObject = stream;
+        setStatus(stream.getAudioTracks().length ? "" : "Микрофон не подключился.");
+        return true;
+      } catch (mediaError) {
+        console.warn("camera and microphone permission failed", mediaError);
+        try {
+          stream = await getUserMediaCompat({ video: { facingMode: "user" }, audio: false });
+          preview.srcObject = stream;
+          setStatus("Камера готова, но микрофон не подключился. Проверьте разрешение на аудио.");
+          return true;
+        } catch (videoError) {
+          console.warn("camera permission failed", videoError);
+          setStatus("MAX не открыл встроенную камеру. Откроется системная запись видео.");
+          fallbackFile.click();
+          return false;
+        }
+      }
+    }
     function buildCircleStream() {
       const canvas = document.createElement("canvas");
       canvas.width = 720;
@@ -514,7 +557,7 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
       holding = true;
       if (starting || recorder?.state === "recording") return;
       starting = true;
-      const ok = await ensureStream();
+      const ok = await ensureAudioVideoStream();
       starting = false;
       if (!ok || !holding) return;
       chunks = [];
