@@ -6,6 +6,7 @@ type User struct {
 	ID             int64
 	PlatformUserID string
 	PlatformChatID string
+	PlatformDialogID string
 	ProfileLink    string
 	Username       string
 	Name           string

@@ -18,6 +18,7 @@ type Update struct {
 type MessageUpdate struct {
 	MessageID string       `json:"message_id"`
 	Chat      Chat         `json:"chat"`
+	Dialog    Chat         `json:"dialog,omitempty"`
 	From      PlatformUser `json:"from"`
 	Text      string       `json:"text,omitempty"`
 	Media     []Media      `json:"media,omitempty"`
@@ -27,6 +28,7 @@ type CallbackUpdate struct {
 	CallbackID string       `json:"callback_id"`
 	MessageID  string       `json:"message_id"`
 	Chat       Chat         `json:"chat"`
+	Dialog     Chat         `json:"dialog,omitempty"`
 	From       PlatformUser `json:"from"`
 	Payload    string       `json:"payload"`
 }

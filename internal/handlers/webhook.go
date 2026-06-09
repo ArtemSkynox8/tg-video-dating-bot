@@ -92,6 +92,7 @@ func normalizeMessage(update maxapi.Update) maxapi.MessageUpdate {
 	return maxapi.MessageUpdate{
 		MessageID: message.Body.MID,
 		Chat:      maxapi.Chat{ID: chatID},
+		Dialog:    maxapi.Chat{ID: message.Recipient.ChatID},
 		From:      from,
 		Text:      message.Body.Text,
 		Media:     normalizeMedia(message.Body.Attachments),
@@ -115,6 +116,7 @@ func normalizeCallback(update maxapi.Update) maxapi.CallbackUpdate {
 		CallbackID: callback.CallbackID,
 		MessageID:  callback.Message.Body.MID,
 		Chat:       maxapi.Chat{ID: chatID},
+		Dialog:     maxapi.Chat{ID: callback.Message.Recipient.ChatID},
 		From:       from,
 		Payload:    callback.Payload,
 	}

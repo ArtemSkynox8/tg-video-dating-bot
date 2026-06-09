@@ -41,7 +41,11 @@ func (c *Client) SendText(ctx context.Context, userID, text string, buttons [][]
 }
 
 func (c *Client) SendMedia(ctx context.Context, userID, mediaID, caption string, buttons [][]Button) (string, error) {
-	videoMessageID, err := c.SendMug(ctx, userID, mediaID)
+	return c.SendMediaToDialogOrUser(ctx, "", userID, mediaID, caption, buttons)
+}
+
+func (c *Client) SendMediaToDialogOrUser(ctx context.Context, dialogID, userID, mediaID, caption string, buttons [][]Button) (string, error) {
+	videoMessageID, err := c.SendMugToDialogOrUser(ctx, dialogID, userID, mediaID)
 	if err != nil {
 		return "", err
 	}
@@ -56,7 +60,27 @@ func (c *Client) SendMedia(ctx context.Context, userID, mediaID, caption string,
 }
 
 func (c *Client) SendMug(ctx context.Context, userID, mediaID string) (string, error) {
+	return c.SendMugToDialogOrUser(ctx, "", userID, mediaID)
+}
+
+func (c *Client) SendMugToDialogOrUser(ctx context.Context, dialogID, userID, mediaID string) (string, error) {
+	if dialogID != "" {
+		messageID, err := c.sendMug(ctx, "/messages?chat_id="+url.QueryEscape(dialogID), mediaID)
+		if err == nil {
+			log.Printf("send mug only chat=%s user=%s token=%s", dialogID, userID, mediaID)
+			return messageID, nil
+		}
+		log.Printf("send mug by chat failed chat=%s user=%s token=%s: %v", dialogID, userID, mediaID, err)
+	}
+	messageID, err := c.sendMug(ctx, "/messages?user_id="+url.QueryEscape(userID), mediaID)
+	if err != nil {
+		return "", err
+	}
 	log.Printf("send mug only user=%s token=%s", userID, mediaID)
+	return messageID, nil
+}
+
+func (c *Client) sendMug(ctx context.Context, path, mediaID string) (string, error) {
 	payload := map[string]any{
 		"token":      mediaID,
 		"format":     "mug",
@@ -70,7 +94,7 @@ func (c *Client) SendMug(ctx context.Context, userID, mediaID string) (string, e
 	var out struct {
 		Message Message `json:"message"`
 	}
-	if err := c.post(ctx, "/messages?user_id="+url.QueryEscape(userID), body, &out); err != nil {
+	if err := c.post(ctx, path, body, &out); err != nil {
 		return "", err
 	}
 	return out.Message.Body.MID, nil

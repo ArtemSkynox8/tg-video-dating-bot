@@ -26,10 +26,11 @@ func NewDatingService(repo *repositories.Repository, max *maxapi.Client, adminID
 
 func (s *DatingService) HandleMessage(ctx context.Context, msg maxapi.MessageUpdate) error {
 	user, err := s.repo.UpsertPlatformUser(ctx, models.User{
-		PlatformUserID: msg.From.ID,
-		PlatformChatID: msg.Chat.ID,
-		ProfileLink:    msg.From.ProfileLink,
-		Username:       msg.From.Username,
+		PlatformUserID:   msg.From.ID,
+		PlatformChatID:   msg.Chat.ID,
+		PlatformDialogID: msg.Dialog.ID,
+		ProfileLink:      msg.From.ProfileLink,
+		Username:         msg.From.Username,
 	})
 	if err != nil {
 		return err
@@ -86,6 +87,12 @@ func (s *DatingService) HandleCallback(ctx context.Context, cb maxapi.CallbackUp
 	}
 	if cb.Chat.ID == "" {
 		cb.Chat.ID = user.PlatformChatID
+	}
+	if cb.Dialog.ID != "" && cb.Dialog.ID != user.PlatformDialogID {
+		if err := s.repo.UpdatePlatformDialogID(ctx, user.ID, cb.Dialog.ID); err != nil {
+			return err
+		}
+		user.PlatformDialogID = cb.Dialog.ID
 	}
 	parts := strings.Split(cb.Payload, ":")
 	if len(parts) == 0 {
@@ -357,7 +364,7 @@ func (s *DatingService) SendNextCandidate(ctx context.Context, user models.User)
 		}
 		return err
 	}
-	_, err = s.max.SendMedia(ctx, user.PlatformChatID, candidate.PlatformMediaID, candidate.Owner.Name, browseButtons(candidate.ID, candidate.Owner.ID))
+	_, err = s.max.SendMediaToDialogOrUser(ctx, user.PlatformDialogID, user.PlatformChatID, candidate.PlatformMediaID, candidate.Owner.Name, browseButtons(candidate.ID, candidate.Owner.ID))
 	return err
 }
 
@@ -447,7 +454,7 @@ func (s *DatingService) SendMatchVideo(ctx context.Context, user models.User, ot
 		}
 		return err
 	}
-	messageID, err := s.max.SendMedia(ctx, user.PlatformChatID, video.PlatformMediaID, "Видео контакта", nil)
+	messageID, err := s.max.SendMediaToDialogOrUser(ctx, user.PlatformDialogID, user.PlatformChatID, video.PlatformMediaID, "Видео контакта", nil)
 	if err != nil {
 		return err
 	}
@@ -540,8 +547,8 @@ func (s *DatingService) SendUserCard(ctx context.Context, admin models.User, idT
 		videoStatus = "есть"
 	}
 	text := fmt.Sprintf(
-		"Карточка пользователя #%d\nplatform_user_id: %s\nchat_id: %s\nname: %s\nusername: %s\ngender: %s\npreferred: %s\nstatus: %s\nflow_state: %s\nactive_video: %s",
-		target.ID, target.PlatformUserID, target.PlatformChatID, target.Name, target.Username, target.Gender, target.PreferredGender, target.Status, target.FlowState, videoStatus,
+		"Карточка пользователя #%d\nplatform_user_id: %s\nchat_id: %s\ndialog_id: %s\nname: %s\nusername: %s\ngender: %s\npreferred: %s\nstatus: %s\nflow_state: %s\nactive_video: %s",
+		target.ID, target.PlatformUserID, target.PlatformChatID, target.PlatformDialogID, target.Name, target.Username, target.Gender, target.PreferredGender, target.Status, target.FlowState, videoStatus,
 	)
 	return s.max.SendText(ctx, admin.PlatformChatID, text, [][]maxapi.Button{{
 		{Text: "🚫 Заблокировать", Payload: fmt.Sprintf("admin:block:%d", target.ID)},
