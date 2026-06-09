@@ -297,6 +297,21 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
       background: #ff6f76;
       transform: scale(.94);
     }
+    .fallback {
+      min-height: 44px;
+      padding: 0 18px;
+      border: 1px solid rgba(255,255,255,.2);
+      border-radius: 12px;
+      background: rgba(255,255,255,.08);
+      color: #fff;
+      font: inherit;
+      font-weight: 700;
+      display: none;
+    }
+    .fallback.show {
+      display: inline-flex;
+      align-items: center;
+    }
     p {
       margin: 0;
       max-width: 320px;
@@ -378,6 +393,7 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
     <div class="preview"><video id="preview" autoplay muted playsinline></video></div>
     <div id="timer" class="timer">00:00</div>
     <button id="record" class="record" aria-label="Записать"></button>
+    <button id="fallbackButton" class="fallback" type="button">Выбрать видео</button>
     <input id="fallbackFile" type="file" accept="video/*,video/mp4,video/webm" capture="user" hidden>
     <p>Нажмите и удерживайте кнопку, чтобы записать кружок</p>
     <p id="status" class="status"></p>
@@ -434,6 +450,7 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
     const preview = document.getElementById("preview");
     const previewRing = document.querySelector(".preview");
     const button = document.getElementById("record");
+    const fallbackButton = document.getElementById("fallbackButton");
     const fallbackFile = document.getElementById("fallbackFile");
     const timer = document.getElementById("timer");
     const statusEl = document.getElementById("status");
@@ -495,6 +512,25 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
       if (!legacy) return Promise.reject(new Error("getUserMedia is not supported"));
       return new Promise((resolve, reject) => legacy.call(navigator, constraints, resolve, reject));
     }
+    async function requestFirstAvailableMedia(constraintsList) {
+      let lastError = null;
+      for (const constraints of constraintsList) {
+        try {
+          return await getUserMediaCompat(constraints);
+        } catch (error) {
+          lastError = error;
+          console.warn("media constraints failed", constraints, error);
+        }
+      }
+      throw lastError || new Error("media request failed");
+    }
+    function mediaErrorLabel(error) {
+      if (!navigator.mediaDevices && !navigator.getUserMedia && !navigator.webkitGetUserMedia && !navigator.mozGetUserMedia) {
+        return "unsupported";
+      }
+      if (!error) return "unknown";
+      return error.name || error.message || "unknown";
+    }
     async function ensureStream() {
       if (stream) return true;
       try {
@@ -518,26 +554,29 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
     async function ensureAudioVideoStream() {
       if (stream) return true;
       try {
-        stream = await getUserMediaCompat({
-          video: { facingMode: "user" },
-          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
-        });
+        stream = await requestFirstAvailableMedia([
+          { video: { facingMode: { ideal: "user" } }, audio: false },
+          { video: true, audio: false }
+        ]);
+        try {
+          const audioStream = await requestFirstAvailableMedia([
+            { audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false },
+            { audio: true, video: false }
+          ]);
+          audioStream.getAudioTracks().forEach(track => stream.addTrack(track));
+        } catch (audioError) {
+          console.warn("audio permission failed", audioError);
+        }
         preview.srcObject = stream;
         setStatus(stream.getAudioTracks().length ? "" : "Микрофон не подключился.");
         return true;
-      } catch (mediaError) {
-        console.warn("camera and microphone permission failed", mediaError);
-        try {
-          stream = await getUserMediaCompat({ video: { facingMode: "user" }, audio: false });
-          preview.srcObject = stream;
-          setStatus("Камера готова, но микрофон не подключился. Проверьте разрешение на аудио.");
-          return true;
-        } catch (videoError) {
-          console.warn("camera permission failed", videoError);
-          setStatus("MAX не открыл встроенную камеру. Откроется системная запись видео.");
-          fallbackFile.click();
-          return false;
-        }
+      } catch (videoError) {
+        const reason = mediaErrorLabel(videoError);
+        console.warn("camera permission failed", videoError);
+        setStatus("MAX не открыл встроенную камеру: " + reason + ". Откроется системная запись видео.");
+        fallbackButton.classList.add("show");
+        fallbackFile.click();
+        return false;
       }
     }
     function buildCircleStream() {
@@ -709,6 +748,7 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
       }
       await uploadBlob(file, 0, file.name || "circle.mp4");
     });
+    fallbackButton.addEventListener("click", () => fallbackFile.click());
     button.addEventListener("pointerdown", start);
     button.addEventListener("pointerup", stop);
     button.addEventListener("pointerleave", stop);
