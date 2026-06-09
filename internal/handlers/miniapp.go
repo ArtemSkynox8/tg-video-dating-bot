@@ -59,7 +59,7 @@ func (h *MiniAppHandler) upload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "too short", http.StatusBadRequest)
 		return
 	}
-	if duration > 60 {
+	if duration > 30 {
 		http.Error(w, "too long", http.StatusBadRequest)
 		return
 	}
@@ -244,15 +244,16 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
     const fallbackFile = document.getElementById("fallbackFile");
     const timer = document.getElementById("timer");
     const statusEl = document.getElementById("status");
-    let stream, recorder, chunks = [], startedAt = 0, tick, stopped = false, holding = false, starting = false, fallbackOpened = false;
+    const maxDuration = 30;
+    let stream, recorder, chunks = [], startedAt = 0, tick = 0, drawTick = 0, stopped = false, holding = false, starting = false;
 
     function setStatus(text) { statusEl.textContent = text; }
     function format(seconds) {
       return String(Math.floor(seconds / 60)).padStart(2, "0") + ":" + String(seconds % 60).padStart(2, "0");
     }
     function setProgress(seconds) {
-      const clamped = Math.max(0, Math.min(60, seconds));
-      previewRing.style.setProperty("--progress", String((clamped / 60) * 100) + "%");
+      const clamped = Math.max(0, Math.min(maxDuration, seconds));
+      previewRing.style.setProperty("--progress", String((clamped / maxDuration) * 100) + "%");
     }
     async function init() {
       if (window.WebApp && WebApp.ready) WebApp.ready();
@@ -287,10 +288,56 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
       } catch (e) {
         console.warn("camera permission failed", e);
         setStatus("MAX не открыл встроенную камеру. Откроется системная запись видео.");
-        fallbackOpened = true;
         fallbackFile.click();
         return false;
       }
+    }
+    function buildCircleStream() {
+      const canvas = document.createElement("canvas");
+      canvas.width = 720;
+      canvas.height = 720;
+      const ctx = canvas.getContext("2d");
+      const draw = () => {
+        ctx.fillStyle = "#101820";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        const vw = preview.videoWidth || 720;
+        const vh = preview.videoHeight || 720;
+        const side = Math.min(vw, vh);
+        const sx = (vw - side) / 2;
+        const sy = (vh - side) / 2;
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(canvas.width / 2, canvas.height / 2, canvas.width / 2 - 8, 0, Math.PI * 2);
+        ctx.clip();
+        ctx.translate(canvas.width, 0);
+        ctx.scale(-1, 1);
+        ctx.drawImage(preview, sx, sy, side, side, 0, 0, canvas.width, canvas.height);
+        ctx.restore();
+        drawTick = requestAnimationFrame(draw);
+      };
+      draw();
+      if (!canvas.captureStream) {
+        cancelAnimationFrame(drawTick);
+        return stream;
+      }
+      const canvasStream = canvas.captureStream(30);
+      stream.getAudioTracks().forEach(track => canvasStream.addTrack(track));
+      return canvasStream;
+    }
+    function startProgressLoop() {
+      cancelAnimationFrame(tick);
+      const frame = () => {
+        if (!startedAt || stopped) return;
+        const elapsed = (Date.now() - startedAt) / 1000;
+        timer.textContent = format(elapsed);
+        setProgress(elapsed);
+        if (elapsed >= maxDuration) {
+          stop();
+          return;
+        }
+        tick = requestAnimationFrame(frame);
+      };
+      tick = requestAnimationFrame(frame);
     }
     async function start() {
       holding = true;
@@ -301,10 +348,11 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
       if (!ok || !holding) return;
       chunks = [];
       stopped = false;
+      const recordingStream = buildCircleStream();
       const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp8,opus")
         ? "video/webm;codecs=vp8,opus"
         : (MediaRecorder.isTypeSupported("video/webm") ? "video/webm" : "");
-      recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      recorder = mimeType ? new MediaRecorder(recordingStream, { mimeType }) : new MediaRecorder(recordingStream);
       recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
       recorder.onstop = upload;
       startedAt = Date.now();
@@ -312,20 +360,16 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
       button.classList.add("recording");
       setStatus("");
       setProgress(0);
-      tick = setInterval(() => {
-        const seconds = Math.floor((Date.now() - startedAt) / 1000);
-        timer.textContent = format(seconds);
-        setProgress(seconds);
-        if (seconds >= 60) stop();
-      }, 200);
+      startProgressLoop();
     }
     function stop() {
       holding = false;
       if (!recorder || recorder.state !== "recording" || stopped) return;
       stopped = true;
-      clearInterval(tick);
+      cancelAnimationFrame(tick);
+      cancelAnimationFrame(drawTick);
       button.classList.remove("recording");
-      setProgress(Math.min(60, Math.floor((Date.now() - startedAt) / 1000)));
+      setProgress(Math.min(maxDuration, (Date.now() - startedAt) / 1000));
       recorder.stop();
     }
     async function upload() {
@@ -351,6 +395,14 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
       }
       setStatus("Кружок сохранен.");
       setTimeout(() => {
+        returnToBot();
+      }, 500);
+    }
+    function returnToBot() {
+      if (history.length > 1) {
+        history.back();
+      }
+      setTimeout(() => {
         if (window.WebApp && WebApp.close) {
           WebApp.close();
           return;
@@ -361,15 +413,14 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
         }
         window.close();
         setTimeout(() => {
-          if (history.length > 1) history.back();
-        }, 150);
-      }, 650);
+          window.location.href = "max://";
+        }, 250);
+      }, 250);
     }
     fallbackFile.addEventListener("change", async () => {
       holding = false;
       const file = fallbackFile.files && fallbackFile.files[0];
       if (!file) {
-        fallbackOpened = false;
         setStatus("Видео не выбрано. Нажмите красную кнопку еще раз.");
         return;
       }
