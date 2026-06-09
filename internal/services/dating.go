@@ -18,10 +18,11 @@ type DatingService struct {
 	max      *maxapi.Client
 	adminIDs []string
 	publicBaseURL string
+	maxAppURL     string
 }
 
-func NewDatingService(repo *repositories.Repository, max *maxapi.Client, adminIDs []string, publicBaseURL string) *DatingService {
-	return &DatingService{repo: repo, max: max, adminIDs: adminIDs, publicBaseURL: strings.TrimRight(publicBaseURL, "/")}
+func NewDatingService(repo *repositories.Repository, max *maxapi.Client, adminIDs []string, publicBaseURL, maxAppURL string) *DatingService {
+	return &DatingService{repo: repo, max: max, adminIDs: adminIDs, publicBaseURL: strings.TrimRight(publicBaseURL, "/"), maxAppURL: strings.TrimRight(maxAppURL, "/")}
 }
 
 func (s *DatingService) HandleMessage(ctx context.Context, msg maxapi.MessageUpdate) error {
@@ -726,7 +727,10 @@ func (s *DatingService) recordButtons(user models.User) [][]maxapi.Button {
 }
 
 func (s *DatingService) recordURL() string {
-	return s.publicBaseURL + "/mini/record"
+	if s.maxAppURL != "" {
+		return s.maxAppURL
+	}
+	return "https://max.ru/id550411830268_1_bot"
 }
 
 func mainMenuButtons() [][]maxapi.Button {
