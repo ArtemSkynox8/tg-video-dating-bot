@@ -129,6 +129,10 @@ func (s *DatingService) HandleCallback(ctx context.Context, cb maxapi.CallbackUp
 		if len(parts) == 2 {
 			return s.HideMatch(ctx, *user, parseID(parts[1]))
 		}
+	case "save_video":
+		if len(parts) == 2 {
+			return s.SaveRecordedVideo(ctx, *user, parseID(parts[1]))
+		}
 	case "rewrite_video":
 		if err := s.repo.SetFlowState(ctx, user.ID, models.StateAwaitingRewriteVideo); err != nil {
 			return err
@@ -197,8 +201,7 @@ func (s *DatingService) SendCommands(ctx context.Context, user models.User) erro
 }
 
 func (s *DatingService) SendRecordPrompt(ctx context.Context, user models.User, text string) error {
-	recordURL := s.recordURL(user)
-	return s.max.SendText(ctx, user.PlatformChatID, text+"\n\nСсылка для записи:\n"+recordURL, s.recordButtons(user))
+	return s.max.SendText(ctx, user.PlatformChatID, text, s.recordButtons(user))
 }
 
 func (s *DatingService) ResetMe(ctx context.Context, user models.User) error {
@@ -216,6 +219,24 @@ func (s *DatingService) AdminResetStore(ctx context.Context, user models.User) e
 		return err
 	}
 	return s.max.SendText(ctx, user.PlatformChatID, "База полностью очищена.", nil)
+}
+
+func (s *DatingService) SaveRecordedVideo(ctx context.Context, user models.User, videoID int64) error {
+	if videoID == 0 {
+		return nil
+	}
+	if err := s.repo.ActivateVideo(ctx, user.ID, videoID); err != nil {
+		if err == repositories.ErrNotFound {
+			return s.max.SendText(ctx, user.PlatformChatID, "Не нашел этот кружок. Запишите заново.", s.recordButtons(user))
+		}
+		return err
+	}
+	if err := s.repo.ClearFlowState(ctx, user.ID); err != nil {
+		return err
+	}
+	return s.max.SendText(ctx, user.PlatformChatID, "✅ Кружок успешно сохранен.", [][]maxapi.Button{
+		{{Text: "▶️ Начать просмотр", Payload: "browse"}},
+	})
 }
 
 func (s *DatingService) SaveNameStep(ctx context.Context, user models.User, name string) error {
@@ -694,7 +715,7 @@ func editProfileButtons() [][]maxapi.Button {
 }
 
 func (s *DatingService) recordButtons(user models.User) [][]maxapi.Button {
-	return [][]maxapi.Button{{{Text: "🎥 Записать кружок", URL: s.recordURL(user)}}}
+	return [][]maxapi.Button{{{Text: "🎥 Записать кружок", URL: s.recordURL(user), OpenApp: true}}}
 }
 
 func (s *DatingService) recordURL(user models.User) string {

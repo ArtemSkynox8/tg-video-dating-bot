@@ -102,6 +102,34 @@ func (r *Repository) SaveVideo(ctx context.Context, userID int64, mediaID, stora
 	return tx.Commit(ctx)
 }
 
+func (r *Repository) SavePendingVideo(ctx context.Context, userID int64, mediaID, storageURL string, duration int) (int64, error) {
+	var id int64
+	err := r.db.QueryRow(ctx, `
+		insert into videos (user_id, platform_media_id, storage_url, duration, is_active)
+		values ($1, $2, nullif($3, ''), $4, false)
+		returning id`, userID, mediaID, storageURL, duration).Scan(&id)
+	return id, err
+}
+
+func (r *Repository) ActivateVideo(ctx context.Context, userID, videoID int64) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `update videos set is_active = false where user_id = $1`, userID); err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx, `update videos set is_active = true where id = $1 and user_id = $2`, videoID, userID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return tx.Commit(ctx)
+}
+
 func (r *Repository) FindCandidate(ctx context.Context, viewerID int64) (*models.Candidate, error) {
 	row := r.db.QueryRow(ctx, `
 		with viewer as (

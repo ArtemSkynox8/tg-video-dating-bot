@@ -100,14 +100,24 @@ func (h *MiniAppHandler) upload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	publicURL := strings.TrimRight(h.cfg.PublicBaseURL, "/") + "/media/" + name
-	if err := h.repo.SaveVideo(r.Context(), user.ID, publicURL, publicURL, duration); err != nil {
+	videoID, err := h.repo.SavePendingVideo(r.Context(), user.ID, publicURL, publicURL, duration)
+	if err != nil {
 		http.Error(w, "database error", http.StatusInternalServerError)
 		return
 	}
-	_ = h.repo.ClearFlowState(r.Context(), user.ID)
-	_ = h.max.SendText(context.Background(), user.PlatformChatID, "✅ Кружок успешно сохранен.", [][]maxapi.Button{
-		{{Text: "▶️ Начать просмотр", Payload: "browse"}},
-	})
+	if _, err := h.max.SendMedia(context.Background(), user.PlatformChatID, publicURL, "Предпросмотр кружка", [][]maxapi.Button{
+		{
+			{Text: "✅ Сохранить", Payload: fmt.Sprintf("save_video:%d", videoID)},
+			{Text: "🎥 Перезаписать", Payload: "rewrite_video"},
+		},
+	}); err != nil {
+		_ = h.max.SendText(context.Background(), user.PlatformChatID, "Кружок загружен. Нажмите сохранить или перезапишите.", [][]maxapi.Button{
+			{
+				{Text: "✅ Сохранить", Payload: fmt.Sprintf("save_video:%d", videoID)},
+				{Text: "🎥 Перезаписать", Payload: "rewrite_video"},
+			},
+		})
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write([]byte(`{"ok":true}`))

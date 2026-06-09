@@ -133,7 +133,12 @@ func inlineKeyboard(buttons [][]Button) []map[string]any {
 				"type": "callback",
 				"text": button.Text,
 			}
-			if button.URL != "" {
+			if button.URL != "" && button.OpenApp {
+				item["type"] = "open_app"
+				item["web_app"] = button.URL
+				item["url"] = button.URL
+				item["payload"] = button.Payload
+			} else if button.URL != "" {
 				item["type"] = "link"
 				item["url"] = button.URL
 			} else {
