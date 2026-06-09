@@ -38,8 +38,9 @@ func main() {
 		_, _ = w.Write([]byte("ok"))
 	})
 	mux.Handle("POST /webhook/max", webhook)
-	mux.Handle("/mini/", miniapp)
-	mux.Handle("/media/", miniapp)
+	mux.Handle("GET /mini/", miniapp)
+	mux.Handle("POST /mini/", miniapp)
+	mux.Handle("GET /media/", miniapp)
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
