@@ -397,7 +397,37 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
       const unsafe = window.WebApp && window.WebApp.initDataUnsafe;
       const bridgeUser = unsafe && unsafe.user && unsafe.user.id;
       if (bridgeUser) return String(bridgeUser);
+      const startParam = unsafe && (unsafe.start_param || unsafe.startParam);
+      if (/^\d+$/.test(String(startParam || ""))) return String(startParam);
+      const fromInitData = userIdFromInitData(window.WebApp && window.WebApp.initData);
+      if (fromInitData) return fromInitData;
+      const fromHash = userIdFromHash();
+      if (fromHash) return fromHash;
       return fallback;
+    }
+    function userIdFromInitData(initData) {
+      if (!initData) return "";
+      try {
+        const params = new URLSearchParams(initData);
+        const user = JSON.parse(params.get("user") || "{}");
+        if (user && user.id) return String(user.id);
+        const startParam = params.get("start_param");
+        if (/^\d+$/.test(String(startParam || ""))) return String(startParam);
+      } catch (e) {
+        console.warn("cannot parse initData", e);
+      }
+      return "";
+    }
+    function userIdFromHash() {
+      try {
+        const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+        const webAppData = hash.get("WebAppData");
+        if (!webAppData) return "";
+        return userIdFromInitData(decodeURIComponent(webAppData));
+      } catch (e) {
+        console.warn("cannot parse WebAppData hash", e);
+      }
+      return "";
     }
     const userId = resolveUserId();
     const returnToBotURL = "{{.ReturnToBot}}";
