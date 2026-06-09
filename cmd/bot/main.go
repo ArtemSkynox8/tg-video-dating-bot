@@ -41,6 +41,7 @@ func main() {
 	mux.Handle("GET /mini/", miniapp)
 	mux.Handle("POST /mini/", miniapp)
 	mux.Handle("GET /media/", miniapp)
+	mux.Handle("GET /assets/recorder-theme/", miniapp)
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,

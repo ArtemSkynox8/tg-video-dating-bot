@@ -11,6 +11,7 @@ RUN apk add --no-cache ca-certificates curl
 RUN adduser -D -H app
 WORKDIR /app
 COPY --from=build /out/bot /app/bot
+COPY --from=build /src/assets /app/assets
 RUN mkdir -p /app/uploads && chown -R app:app /app/uploads
 USER app
 EXPOSE 8080

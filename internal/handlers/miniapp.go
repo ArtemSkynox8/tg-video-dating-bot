@@ -32,6 +32,7 @@ func (h *MiniAppHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /mini/record", h.recordPage)
 	mux.HandleFunc("POST /mini/upload", h.upload)
 	mux.Handle("/media/", http.StripPrefix("/media/", http.FileServer(http.Dir(h.cfg.UploadDir))))
+	mux.Handle("/assets/recorder-theme/", http.StripPrefix("/assets/recorder-theme/", http.FileServer(http.Dir("assets/recorder-theme"))))
 }
 
 func (h *MiniAppHandler) recordPage(w http.ResponseWriter, r *http.Request) {
@@ -177,6 +178,7 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
       width: min(78vw, 320px);
       aspect-ratio: 1;
       padding: 7px;
+      position: relative;
       border-radius: 50%;
       overflow: hidden;
       background:
@@ -184,7 +186,25 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
         #202b36;
       box-shadow: 0 22px 80px rgba(0,0,0,.35);
     }
+    .preview::before {
+      content: "";
+      position: absolute;
+      inset: 7px;
+      border-radius: 50%;
+      background: #202b36 url("/assets/recorder-theme/dark.jpg") center / cover no-repeat;
+      filter: blur(15px);
+      transform: scale(1.12);
+      opacity: .9;
+      z-index: 0;
+    }
+    @media (prefers-color-scheme: light) {
+      .preview::before {
+        background-image: url("/assets/recorder-theme/light.jpg");
+      }
+    }
     video {
+      position: relative;
+      z-index: 1;
       width: 100%;
       height: 100%;
       border-radius: 50%;
@@ -301,7 +321,7 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
       <p id="modalText">Загружаем кружок и отправляем предпросмотр в бот.</p>
       <div class="bar"><span id="uploadBar"></span></div>
       <div id="uploadPercent" class="percent">0%</div>
-      <a id="returnButton" class="return" href="{{.ReturnToBot}}">Вернуться в бота</a>
+      <a id="returnButton" class="return" href="{{.ReturnToBot}}" target="_self">Вернуться в бота</a>
     </div>
   </div>
   <script>
@@ -537,21 +557,10 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
         xhr.send(form);
       });
     }
-    returnButton.addEventListener("click", e => {
-      e.preventDefault();
-      const target = returnButton.href || returnToBotURL || "https://max.ru/id550411830268_1_bot";
-      if (window.WebApp && WebApp.close) {
-        WebApp.close();
-        return;
-      }
-      if (window.MAX && MAX.close) {
-        MAX.close();
-        return;
-      }
-      window.location.href = target;
+    returnButton.addEventListener("click", () => {
       setTimeout(() => {
         window.close();
-      }, 300);
+      }, 500);
     });
     fallbackFile.addEventListener("change", async () => {
       holding = false;
