@@ -17,10 +17,11 @@ type DatingService struct {
 	repo     *repositories.Repository
 	max      *maxapi.Client
 	adminIDs []string
+	publicBaseURL string
 }
 
-func NewDatingService(repo *repositories.Repository, max *maxapi.Client, adminIDs []string) *DatingService {
-	return &DatingService{repo: repo, max: max, adminIDs: adminIDs}
+func NewDatingService(repo *repositories.Repository, max *maxapi.Client, adminIDs []string, publicBaseURL string) *DatingService {
+	return &DatingService{repo: repo, max: max, adminIDs: adminIDs, publicBaseURL: strings.TrimRight(publicBaseURL, "/")}
 }
 
 func (s *DatingService) HandleMessage(ctx context.Context, msg maxapi.MessageUpdate) error {
@@ -108,7 +109,7 @@ func (s *DatingService) HandleCallback(ctx context.Context, cb maxapi.CallbackUp
 		if err := s.repo.SetFlowState(ctx, user.ID, models.StateAwaitingRewriteVideo); err != nil {
 			return err
 		}
-		return s.max.SendText(ctx, cb.Chat.ID, "Отправьте новое короткое видео до 60 секунд. Старое видео станет неактивным.", nil)
+		return s.max.SendText(ctx, cb.Chat.ID, "Запишите новый кружок в мини-приложении. Старое видео станет неактивным.", s.recordButtons(user))
 	case "edit_profile":
 		return s.max.SendText(ctx, cb.Chat.ID, "Что изменить?", editProfileButtons())
 	case "edit_name":
@@ -221,7 +222,7 @@ func (s *DatingService) SavePreferredGenderStep(ctx context.Context, user models
 	if err := s.repo.SetFlowState(ctx, user.ID, models.StateAwaitingVideo); err != nil {
 		return err
 	}
-	return s.max.SendText(ctx, user.PlatformChatID, "Отправьте короткое видео до 60 секунд.", nil)
+	return s.max.SendText(ctx, user.PlatformChatID, "Запишите короткий кружок до 60 секунд.", s.recordButtons(user))
 }
 
 func (s *DatingService) HandleMedia(ctx context.Context, user models.User, media maxapi.Media) error {
@@ -263,7 +264,7 @@ func (s *DatingService) SendNextCandidate(ctx context.Context, user models.User)
 			if setErr := s.repo.SetFlowState(ctx, user.ID, models.StateAwaitingVideo); setErr != nil {
 				return setErr
 			}
-			return s.max.SendText(ctx, user.PlatformChatID, "Сначала отправьте свое короткое видео.", nil)
+		return s.max.SendText(ctx, user.PlatformChatID, "Сначала запишите свой кружок.", s.recordButtons(user))
 		}
 		return err
 	}
@@ -590,6 +591,11 @@ func editProfileButtons() [][]maxapi.Button {
 		{Text: "Пол", Payload: "edit_gender"},
 		{Text: "Кого смотреть", Payload: "edit_preferred"},
 	}}
+}
+
+func (s *DatingService) recordButtons(user models.User) [][]maxapi.Button {
+	url := s.publicBaseURL + "/mini/record?u=" + user.PlatformUserID
+	return [][]maxapi.Button{{{Text: "🎥 Записать кружок", URL: url}}}
 }
 
 func mainMenuButtons() [][]maxapi.Button {

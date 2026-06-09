@@ -14,6 +14,7 @@ type Config struct {
 	MaxWebhookSecret string
 	DatabaseURL      string
 	RedisAddr        string
+	UploadDir        string
 	AdminPlatformIDs []string
 }
 
@@ -32,6 +33,7 @@ func Load() Config {
 		MaxWebhookSecret: os.Getenv("MAX_WEBHOOK_SECRET"),
 		DatabaseURL:      getEnv("DATABASE_URL", "postgres://dating:dating@localhost:5432/dating?sslmode=disable"),
 		RedisAddr:        getEnv("REDIS_ADDR", "localhost:6379"),
+		UploadDir:        getEnv("UPLOAD_DIR", "/app/uploads"),
 		AdminPlatformIDs: splitCSV(os.Getenv("ADMIN_PLATFORM_IDS")),
 	}
 }

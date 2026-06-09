@@ -36,10 +36,14 @@ func (c *Client) SendText(ctx context.Context, chatID, text string, buttons [][]
 }
 
 func (c *Client) SendMedia(ctx context.Context, chatID, mediaID, caption string, buttons [][]Button) (string, error) {
+	payload := map[string]any{"token": mediaID}
+	if strings.HasPrefix(mediaID, "http://") || strings.HasPrefix(mediaID, "https://") {
+		payload = map[string]any{"url": mediaID}
+	}
 	body := map[string]any{
 		"text": caption,
 		"attachments": []map[string]any{
-			{"type": "video", "payload": map[string]any{"token": mediaID}},
+			{"type": "video", "payload": payload},
 		},
 	}
 	if len(buttons) > 0 {

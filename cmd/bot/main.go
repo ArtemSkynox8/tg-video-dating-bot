@@ -26,6 +26,7 @@ func main() {
 	defer stop()
 
 	webhook := newDynamicWebhook()
+	miniapp := newDynamicWebhook()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, _ *http.Request) {
@@ -37,6 +38,8 @@ func main() {
 		_, _ = w.Write([]byte("ok"))
 	})
 	mux.Handle("POST /webhook/max", webhook)
+	mux.Handle("/mini/", miniapp)
+	mux.Handle("/media/", miniapp)
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
@@ -51,7 +54,7 @@ func main() {
 		}
 	}()
 
-	go initializeBot(ctx, cfg, webhook)
+	go initializeBot(ctx, cfg, webhook, miniapp)
 
 	<-ctx.Done()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -85,7 +88,7 @@ func (d *dynamicWebhook) Set(handler http.Handler) {
 	d.mu.Unlock()
 }
 
-func initializeBot(ctx context.Context, cfg config.Config, webhook *dynamicWebhook) {
+func initializeBot(ctx context.Context, cfg config.Config, webhook *dynamicWebhook, miniapp *dynamicWebhook) {
 	pool, err := db.Connect(ctx, cfg.DatabaseURL)
 	if err != nil {
 		log.Printf("connect database: %v", err)
@@ -102,8 +105,11 @@ func initializeBot(ctx context.Context, cfg config.Config, webhook *dynamicWebho
 
 	repo := repositories.New(pool)
 	maxClient := maxapi.NewClient(cfg.MaxAPIBaseURL, cfg.MaxBotToken)
-	botService := services.NewDatingService(repo, maxClient, cfg.AdminPlatformIDs)
+	botService := services.NewDatingService(repo, maxClient, cfg.AdminPlatformIDs, cfg.PublicBaseURL)
 	webhook.Set(handlers.NewWebhookHandler(cfg, botService))
+	miniMux := http.NewServeMux()
+	handlers.NewMiniAppHandler(cfg, repo, maxClient).Register(miniMux)
+	miniapp.Set(miniMux)
 	log.Printf("bot services initialized")
 
 	if cfg.MaxBotToken != "" && cfg.PublicBaseURL != "" && cfg.PublicBaseURL != "http://localhost:8080" {
