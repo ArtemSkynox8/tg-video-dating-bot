@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"regexp"
 	"strings"
 )
 
@@ -19,11 +20,7 @@ type Config struct {
 }
 
 func Load() Config {
-	httpAddr := getEnv("HTTP_ADDR", "")
-	if httpAddr == "" {
-		port := getEnv("PORT", "8080")
-		httpAddr = ":" + port
-	}
+	httpAddr := normalizeHTTPAddr(getEnv("HTTP_ADDR", ""), getEnv("PORT", "8080"))
 	return Config{
 		AppEnv:           getEnv("APP_ENV", "development"),
 		HTTPAddr:         httpAddr,
@@ -36,6 +33,24 @@ func Load() Config {
 		UploadDir:        getEnv("UPLOAD_DIR", "/app/uploads"),
 		AdminPlatformIDs: splitCSV(os.Getenv("ADMIN_PLATFORM_IDS")),
 	}
+}
+
+func normalizeHTTPAddr(httpAddr, port string) string {
+	httpAddr = strings.TrimSpace(httpAddr)
+	port = strings.TrimSpace(port)
+	if port == "" {
+		port = "8080"
+	}
+	if httpAddr == "" {
+		return "0.0.0.0:" + port
+	}
+	if regexp.MustCompile(`^\d+$`).MatchString(httpAddr) {
+		return "0.0.0.0:" + httpAddr
+	}
+	if strings.HasPrefix(httpAddr, ":") {
+		return "0.0.0.0" + httpAddr
+	}
+	return httpAddr
 }
 
 func getEnv(key, fallback string) string {
