@@ -70,6 +70,8 @@ func (s *DatingService) HandleMessage(ctx context.Context, msg maxapi.MessageUpd
 		return s.SendNextCandidate(ctx, *user)
 	case len(msg.Media) > 0:
 		return s.HandleMedia(ctx, *user, msg.Media[0])
+	case msg.Link.Type == "forward":
+		return s.max.SendText(ctx, user.PlatformChatID, "MAX переслал сообщение, но не передал видеофайл боту. Отправьте видео через кнопку «Выбрать видео» в мини-приложении или прикрепите его как обычное видео/файл.", s.recordButtons(*user))
 	case user.FlowState == models.StateAwaitingName:
 		return s.SaveNameStep(ctx, *user, text)
 	case user.FlowState == models.StateAwaitingEditName:

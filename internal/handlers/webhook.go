@@ -49,8 +49,8 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "message_created":
 		if update.Message != nil {
 			msg := normalizeMessage(update)
-			log.Printf("max update message_created user=%s chat=%s sender=%s recipient_chat=%s recipient_user=%s attachments=%d media=%d text=%q",
-				msg.From.ID, msg.Chat.ID, update.Message.Sender.ID, update.Message.Recipient.ChatID, update.Message.Recipient.UserID, len(update.Message.Body.Attachments), len(msg.Media), msg.Text)
+			log.Printf("max update message_created user=%s chat=%s sender=%s recipient_chat=%s recipient_user=%s attachments=%d media=%d link=%s text=%q",
+				msg.From.ID, msg.Chat.ID, update.Message.Sender.ID, update.Message.Recipient.ChatID, update.Message.Recipient.UserID, len(update.Message.Body.Attachments), len(msg.Media), msg.Link.Type, msg.Text)
 			if msg.Text == "" && len(update.Message.Body.Attachments) == 0 {
 				log.Printf("max empty message raw=%s", limitLog(string(body), 2500))
 			}
@@ -106,6 +106,7 @@ func normalizeMessage(update maxapi.Update) maxapi.MessageUpdate {
 		From:      from,
 		Text:      message.Body.Text,
 		Media:     normalizeMedia(message.Body.Attachments),
+		Link:      message.Link,
 	}
 }
 

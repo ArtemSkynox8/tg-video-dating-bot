@@ -22,6 +22,7 @@ type MessageUpdate struct {
 	From      PlatformUser `json:"from"`
 	Text      string       `json:"text,omitempty"`
 	Media     []Media      `json:"media,omitempty"`
+	Link      MessageLink  `json:"link,omitempty"`
 }
 
 type CallbackUpdate struct {
@@ -81,6 +82,13 @@ type Message struct {
 	Sender    PlatformUser `json:"sender"`
 	Recipient Recipient   `json:"recipient"`
 	Body      MessageBody `json:"body"`
+	Link      MessageLink `json:"link,omitempty"`
+}
+
+type MessageLink struct {
+	Type   string       `json:"type,omitempty"`
+	ChatID string       `json:"chat_id,omitempty"`
+	Sender PlatformUser `json:"sender,omitempty"`
 }
 
 type Recipient struct {
