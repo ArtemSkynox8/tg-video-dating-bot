@@ -201,7 +201,7 @@ func (s *DatingService) SendCommands(ctx context.Context, user models.User) erro
 }
 
 func (s *DatingService) SendRecordPrompt(ctx context.Context, user models.User, text string) error {
-	return s.max.SendText(ctx, user.PlatformChatID, text+"\n\nОткройте мини-приложение кнопкой MAX в чате и запишите кружок.", nil)
+	return s.max.SendText(ctx, user.PlatformChatID, text+"\n\nОткройте запись в браузере, разрешите камеру и удерживайте красную кнопку.", s.recordButtons(user))
 }
 
 func (s *DatingService) ResetMe(ctx context.Context, user models.User) error {
@@ -715,11 +715,11 @@ func editProfileButtons() [][]maxapi.Button {
 }
 
 func (s *DatingService) recordButtons(user models.User) [][]maxapi.Button {
-	return [][]maxapi.Button{{{Text: "🎥 Записать кружок", URL: s.recordURL(user), OpenApp: true}}}
+	return [][]maxapi.Button{{{Text: "🎥 Открыть запись", URL: s.recordURL(user)}}}
 }
 
 func (s *DatingService) recordURL(user models.User) string {
-	return s.publicBaseURL + "/mini/record"
+	return s.publicBaseURL + "/mini/record?u=" + user.PlatformUserID
 }
 
 func mainMenuButtons() [][]maxapi.Button {
