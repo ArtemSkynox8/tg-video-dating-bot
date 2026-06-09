@@ -719,7 +719,7 @@ func (s *DatingService) recordButtons(user models.User) [][]maxapi.Button {
 }
 
 func (s *DatingService) recordURL(user models.User) string {
-	return s.publicBaseURL + "/mini/record?u=" + user.PlatformUserID
+	return s.publicBaseURL + "/mini/record"
 }
 
 func mainMenuButtons() [][]maxapi.Button {

@@ -35,10 +35,6 @@ func (h *MiniAppHandler) Register(mux *http.ServeMux) {
 
 func (h *MiniAppHandler) recordPage(w http.ResponseWriter, r *http.Request) {
 	platformUserID := strings.TrimSpace(r.URL.Query().Get("u"))
-	if platformUserID == "" {
-		http.Error(w, "missing user", http.StatusBadRequest)
-		return
-	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = miniRecordTemplate.Execute(w, map[string]string{
 		"UserID": platformUserID,
@@ -129,6 +125,7 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Запись кружка</title>
+  <script src="https://st.max.ru/js/max-web-app.js"></script>
   <style>
     * { box-sizing: border-box; }
     body {
@@ -203,7 +200,14 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
     <p id="status" class="status"></p>
   </main>
   <script>
-    const userId = "{{.UserID}}";
+    function resolveUserId() {
+      const fallback = "{{.UserID}}";
+      const unsafe = window.WebApp && window.WebApp.initDataUnsafe;
+      const bridgeUser = unsafe && unsafe.user && unsafe.user.id;
+      if (bridgeUser) return String(bridgeUser);
+      return fallback;
+    }
+    const userId = resolveUserId();
     const preview = document.getElementById("preview");
     const button = document.getElementById("record");
     const timer = document.getElementById("timer");
@@ -215,6 +219,12 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
       return String(Math.floor(seconds / 60)).padStart(2, "0") + ":" + String(seconds % 60).padStart(2, "0");
     }
     async function init() {
+      if (window.WebApp && WebApp.ready) WebApp.ready();
+      if (!userId) {
+        setStatus("Откройте запись из кнопки бота в MAX.");
+        button.disabled = true;
+        return;
+      }
       try {
         stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: true });
         preview.srcObject = stream;
@@ -266,7 +276,8 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
       }
       setStatus("Кружок сохранен.");
       setTimeout(() => {
-        if (window.MAX && MAX.close) MAX.close();
+        if (window.WebApp && WebApp.close) WebApp.close();
+        else if (window.MAX && MAX.close) MAX.close();
         else window.close();
       }, 650);
     }
