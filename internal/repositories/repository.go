@@ -211,7 +211,7 @@ func (r *Repository) CreateView(ctx context.Context, viewerID, videoID, viewedUs
 	}
 	if _, err := tx.Exec(ctx, `
 		insert into user_action_logs (user_id, action, payload)
-		values ($1, $2, jsonb_build_object('video_id', $3, 'viewed_user_id', $4))`,
+		values ($1, $2, jsonb_build_object('video_id', $3::bigint, 'viewed_user_id', $4::bigint))`,
 		viewerID, action, videoID, viewedUserID); err != nil {
 		return err
 	}

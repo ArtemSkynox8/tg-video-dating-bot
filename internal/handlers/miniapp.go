@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -100,11 +101,20 @@ func (h *MiniAppHandler) upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	publicURL := strings.TrimRight(h.cfg.PublicBaseURL, "/") + "/media/" + name
+	uploadPath := path
+	uploadName := name
+	if convertedPath, err := convertVideoForMax(r.Context(), path); err != nil {
+		log.Printf("convert video for max user=%s path=%s: %v", user.PlatformUserID, path, err)
+	} else {
+		uploadPath = convertedPath
+		uploadName = filepath.Base(convertedPath)
+	}
+
+	publicURL := strings.TrimRight(h.cfg.PublicBaseURL, "/") + "/media/" + uploadName
 	platformMediaID := publicURL
 	uploadedToMax := false
-	if token, err := h.max.UploadVideo(r.Context(), path); err != nil {
-		log.Printf("upload video to max user=%s path=%s: %v", user.PlatformUserID, path, err)
+	if token, err := h.max.UploadVideo(r.Context(), uploadPath); err != nil {
+		log.Printf("upload video to max user=%s path=%s: %v", user.PlatformUserID, uploadPath, err)
 	} else {
 		platformMediaID = token
 		uploadedToMax = true
@@ -143,6 +153,34 @@ func (h *MiniAppHandler) upload(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write([]byte(`{"ok":true}`))
+}
+
+func convertVideoForMax(ctx context.Context, inputPath string) (string, error) {
+	ext := filepath.Ext(inputPath)
+	outputPath := strings.TrimSuffix(inputPath, ext) + "-max.mp4"
+	convertCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(convertCtx, "ffmpeg",
+		"-y",
+		"-i", inputPath,
+		"-t", "30",
+		"-vf", `crop=min(iw\,ih):min(iw\,ih),scale=480:480,format=yuv420p`,
+		"-c:v", "libx264",
+		"-profile:v", "baseline",
+		"-level", "3.0",
+		"-crf", "22",
+		"-preset", "veryfast",
+		"-bf", "0",
+		"-c:a", "aac",
+		"-b:a", "128k",
+		"-movflags", "+faststart",
+		outputPath,
+	)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return outputPath, nil
 }
 
 var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doctype html>
