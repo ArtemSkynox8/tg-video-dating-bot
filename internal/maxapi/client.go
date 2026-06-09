@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -47,6 +48,7 @@ func (c *Client) SendMedia(ctx context.Context, userID, mediaID, caption string,
 	if caption == "" && len(buttons) == 0 {
 		return videoMessageID, nil
 	}
+	time.Sleep(1200 * time.Millisecond)
 	if err := c.SendText(ctx, userID, caption, buttons); err != nil {
 		return "", err
 	}
@@ -54,6 +56,7 @@ func (c *Client) SendMedia(ctx context.Context, userID, mediaID, caption string,
 }
 
 func (c *Client) SendMug(ctx context.Context, userID, mediaID string) (string, error) {
+	log.Printf("send mug only user=%s token=%s", userID, mediaID)
 	payload := map[string]any{
 		"token":      mediaID,
 		"format":     "mug",

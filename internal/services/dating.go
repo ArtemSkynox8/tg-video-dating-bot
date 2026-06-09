@@ -669,7 +669,7 @@ func profileURL(user models.User) string {
 	if user.ProfileLink != "" {
 		return user.ProfileLink
 	}
-	return "max://user/" + user.PlatformUserID
+	return "https://max.ru/id" + user.PlatformUserID
 }
 
 func genderButtons() [][]maxapi.Button {
