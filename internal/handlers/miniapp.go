@@ -137,7 +137,7 @@ func (h *MiniAppHandler) upload(w http.ResponseWriter, r *http.Request) {
 			if attempt > 0 {
 				time.Sleep(5 * time.Second)
 			}
-			_, sendErr = h.max.SendMediaToDialogOrUser(context.Background(), user.PlatformDialogID, user.PlatformChatID, platformMediaID, "Предпросмотр кружка", buttons)
+			_, sendErr = h.max.SendVideoThenTextToDialogOrUser(context.Background(), user.PlatformDialogID, user.PlatformChatID, platformMediaID, "Предпросмотр кружка", buttons)
 			if sendErr == nil {
 				break
 			}

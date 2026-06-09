@@ -58,13 +58,30 @@ func (c *Client) SendMediaToDialogOrUser(ctx context.Context, dialogID, userID, 
 	return "", fmt.Errorf("missing recipient for media message")
 }
 
+func (c *Client) SendVideoThenTextToDialogOrUser(ctx context.Context, dialogID, userID, mediaID, caption string, buttons [][]Button) (string, error) {
+	messageID, err := c.SendMediaToDialogOrUser(ctx, dialogID, userID, mediaID, "", nil)
+	if err != nil {
+		return "", err
+	}
+	if caption == "" && len(buttons) == 0 {
+		return messageID, nil
+	}
+	time.Sleep(1200 * time.Millisecond)
+	if err := c.SendText(ctx, userID, caption, buttons); err != nil {
+		return "", err
+	}
+	return messageID, nil
+}
+
 func (c *Client) sendVideo(ctx context.Context, path, mediaID, caption string, buttons [][]Button) (string, error) {
 	payload := map[string]any{"token": mediaID, "videoType": 1}
 	body := map[string]any{
-		"text": caption,
 		"attachments": []map[string]any{
 			{"type": "video", "payload": payload, "videoType": 1},
 		},
+	}
+	if caption != "" {
+		body["text"] = caption
 	}
 	if len(buttons) > 0 {
 		body["attachments"] = append(body["attachments"].([]map[string]any), inlineKeyboard(buttons)...)
