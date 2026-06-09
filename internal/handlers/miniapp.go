@@ -36,6 +36,8 @@ func (h *MiniAppHandler) Register(mux *http.ServeMux) {
 func (h *MiniAppHandler) recordPage(w http.ResponseWriter, r *http.Request) {
 	platformUserID := strings.TrimSpace(r.URL.Query().Get("u"))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Permissions-Policy", "camera=(self), microphone=(self)")
+	w.Header().Set("Feature-Policy", "camera 'self'; microphone 'self'")
 	_ = miniRecordTemplate.Execute(w, map[string]string{
 		"UserID": platformUserID,
 	})
@@ -196,6 +198,7 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
     <div class="preview"><video id="preview" autoplay muted playsinline></video></div>
     <div id="timer" class="timer">00:00</div>
     <button id="record" class="record" aria-label="Записать"></button>
+    <input id="fallbackFile" type="file" accept="video/*" capture="user" hidden>
     <p>Нажмите и удерживайте кнопку, чтобы записать кружок</p>
     <p id="status" class="status"></p>
   </main>
@@ -210,9 +213,10 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
     const userId = resolveUserId();
     const preview = document.getElementById("preview");
     const button = document.getElementById("record");
+    const fallbackFile = document.getElementById("fallbackFile");
     const timer = document.getElementById("timer");
     const statusEl = document.getElementById("status");
-    let stream, recorder, chunks = [], startedAt = 0, tick, stopped = false, holding = false, starting = false;
+    let stream, recorder, chunks = [], startedAt = 0, tick, stopped = false, holding = false, starting = false, fallbackOpened = false;
 
     function setStatus(text) { statusEl.textContent = text; }
     function format(seconds) {
@@ -235,7 +239,9 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
         setStatus("");
         return true;
       } catch (e) {
-        setStatus("MAX не дал доступ к камере. Проверьте разрешения приложения MAX для камеры и микрофона.");
+        setStatus("Откроется нативная запись видео. Запишите кружок и подтвердите выбор.");
+        fallbackOpened = true;
+        fallbackFile.click();
         return false;
       }
     }
@@ -276,12 +282,14 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
         setStatus("Запись слишком короткая. Запишите минимум 3 секунды.");
         return;
       }
+      await uploadBlob(new Blob(chunks, { type: "video/webm" }), duration, "circle.webm");
+    }
+    async function uploadBlob(blob, duration, filename) {
       setStatus("Загружаю видео...");
-      const blob = new Blob(chunks, { type: "video/webm" });
       const form = new FormData();
       form.append("user_id", userId);
       form.append("duration", String(duration));
-      form.append("video", blob, "circle.webm");
+      form.append("video", blob, filename);
       const res = await fetch("/mini/upload", { method: "POST", body: form });
       if (!res.ok) {
         setStatus("Не удалось загрузить. Запишите заново.");
@@ -294,6 +302,16 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
         else window.close();
       }, 650);
     }
+    fallbackFile.addEventListener("change", async () => {
+      holding = false;
+      const file = fallbackFile.files && fallbackFile.files[0];
+      if (!file) {
+        fallbackOpened = false;
+        setStatus("Видео не выбрано. Нажмите красную кнопку еще раз.");
+        return;
+      }
+      await uploadBlob(file, 0, file.name || "circle.mp4");
+    });
     button.addEventListener("pointerdown", start);
     button.addEventListener("pointerup", stop);
     button.addEventListener("pointerleave", stop);
