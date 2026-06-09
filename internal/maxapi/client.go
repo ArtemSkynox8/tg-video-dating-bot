@@ -59,11 +59,11 @@ func (c *Client) SendMediaToDialogOrUser(ctx context.Context, dialogID, userID, 
 }
 
 func (c *Client) sendVideo(ctx context.Context, path, mediaID, caption string, buttons [][]Button) (string, error) {
-	payload := map[string]any{"token": mediaID}
+	payload := map[string]any{"token": mediaID, "videoType": 1}
 	body := map[string]any{
 		"text": caption,
 		"attachments": []map[string]any{
-			{"type": "video", "payload": payload},
+			{"type": "video", "payload": payload, "videoType": 1},
 		},
 	}
 	if len(buttons) > 0 {
