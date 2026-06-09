@@ -11,6 +11,7 @@ type User struct {
 	Name           string
 	Gender         string
 	PreferredGender string
+	FlowState      string
 	IsPremium      bool
 	Status         string
 	RestrictedUntil *time.Time
@@ -47,3 +48,11 @@ const (
 	ActionReport = "report"
 )
 
+const (
+	StateAwaitingName = "awaiting_name"
+	StateAwaitingGender = "awaiting_gender"
+	StateAwaitingPreferredGender = "awaiting_preferred_gender"
+	StateAwaitingVideo = "awaiting_video"
+	StateAwaitingRewriteVideo = "awaiting_rewrite_video"
+	StateAwaitingEditName = "awaiting_edit_name"
+)

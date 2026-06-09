@@ -7,6 +7,7 @@ create table users (
     name text,
     gender text,
     preferred_gender text,
+    flow_state text not null default '',
     is_premium boolean not null default false,
     status text not null default 'active',
     restricted_until timestamptz,
@@ -112,4 +113,3 @@ create index matches_user1_idx on matches(user1_id);
 create index matches_user2_idx on matches(user2_id);
 create index priority_queue_target_idx on priority_queue(target_user_id, expires_at);
 create index video_reports_reported_idx on video_reports(reported_user_id, created_at);
-

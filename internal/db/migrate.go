@@ -21,12 +21,15 @@ create table if not exists users (
     name text,
     gender text,
     preferred_gender text,
+    flow_state text not null default '',
     is_premium boolean not null default false,
     status text not null default 'active',
     restricted_until timestamptz,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now()
 );
+
+alter table users add column if not exists flow_state text not null default '';
 
 create table if not exists videos (
     id bigserial primary key,

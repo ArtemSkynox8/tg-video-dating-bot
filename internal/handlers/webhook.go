@@ -105,8 +105,11 @@ func normalizeMedia(attachments []maxapi.Attachment) []maxapi.Media {
 			continue
 		}
 		id := ""
-		if token, ok := attachment.Payload["token"]; ok {
-			id = fmt.Sprint(token)
+		for _, key := range []string{"token", "file_id", "id", "video_token"} {
+			if token, ok := attachment.Payload[key]; ok {
+				id = fmt.Sprint(token)
+				break
+			}
 		}
 		if id == "" {
 			continue

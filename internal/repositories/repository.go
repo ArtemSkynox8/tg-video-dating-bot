@@ -23,7 +23,7 @@ func New(db *pgxpool.Pool) *Repository {
 func (r *Repository) GetUserByPlatformID(ctx context.Context, platformUserID string) (*models.User, error) {
 	row := r.db.QueryRow(ctx, `
 		select id, platform_user_id, platform_chat_id, coalesce(profile_link, ''), coalesce(username, ''),
-		       coalesce(name, ''), coalesce(gender, ''), coalesce(preferred_gender, ''), is_premium,
+		       coalesce(name, ''), coalesce(gender, ''), coalesce(preferred_gender, ''), coalesce(flow_state, ''), is_premium,
 		       status, restricted_until, created_at, updated_at
 		from users where platform_user_id = $1`, platformUserID)
 	return scanUser(row)
@@ -39,7 +39,7 @@ func (r *Repository) UpsertPlatformUser(ctx context.Context, user models.User) (
 			username = coalesce(excluded.username, users.username),
 			updated_at = now()
 		returning id, platform_user_id, platform_chat_id, coalesce(profile_link, ''), coalesce(username, ''),
-		          coalesce(name, ''), coalesce(gender, ''), coalesce(preferred_gender, ''), is_premium,
+		          coalesce(name, ''), coalesce(gender, ''), coalesce(preferred_gender, ''), coalesce(flow_state, ''), is_premium,
 		          status, restricted_until, created_at, updated_at`,
 		user.PlatformUserID, user.PlatformChatID, user.ProfileLink, user.Username)
 	return scanUser(row)
@@ -50,6 +50,30 @@ func (r *Repository) UpdateProfile(ctx context.Context, userID int64, name, gend
 		update users set name = $2, gender = $3, preferred_gender = $4, updated_at = now()
 		where id = $1`, userID, name, gender, preferredGender)
 	return err
+}
+
+func (r *Repository) UpdateName(ctx context.Context, userID int64, name string) error {
+	_, err := r.db.Exec(ctx, `update users set name = $2, updated_at = now() where id = $1`, userID, name)
+	return err
+}
+
+func (r *Repository) UpdateGender(ctx context.Context, userID int64, gender string) error {
+	_, err := r.db.Exec(ctx, `update users set gender = $2, updated_at = now() where id = $1`, userID, gender)
+	return err
+}
+
+func (r *Repository) UpdatePreferredGender(ctx context.Context, userID int64, preferredGender string) error {
+	_, err := r.db.Exec(ctx, `update users set preferred_gender = $2, updated_at = now() where id = $1`, userID, preferredGender)
+	return err
+}
+
+func (r *Repository) SetFlowState(ctx context.Context, userID int64, state string) error {
+	_, err := r.db.Exec(ctx, `update users set flow_state = $2, updated_at = now() where id = $1`, userID, state)
+	return err
+}
+
+func (r *Repository) ClearFlowState(ctx context.Context, userID int64) error {
+	return r.SetFlowState(ctx, userID, "")
 }
 
 func (r *Repository) SaveVideo(ctx context.Context, userID int64, mediaID, storageURL string, duration int) error {
@@ -88,7 +112,7 @@ func (r *Repository) FindCandidate(ctx context.Context, viewerID int64) (*models
 		)
 		select v.id, v.user_id, v.platform_media_id, coalesce(v.storage_url, ''), v.duration, v.is_active, v.created_at,
 		       u.id, u.platform_user_id, u.platform_chat_id, coalesce(u.profile_link, ''), coalesce(u.username, ''),
-		       coalesce(u.name, ''), coalesce(u.gender, ''), coalesce(u.preferred_gender, ''), u.is_premium,
+		       coalesce(u.name, ''), coalesce(u.gender, ''), coalesce(u.preferred_gender, ''), coalesce(u.flow_state, ''), u.is_premium,
 		       u.status, u.restricted_until, u.created_at, u.updated_at
 		from (
 			select * from priority
@@ -108,7 +132,7 @@ func (r *Repository) FindCandidate(ctx context.Context, viewerID int64) (*models
 	if err := row.Scan(
 		&c.ID, &c.UserID, &c.PlatformMediaID, &c.StorageURL, &c.Duration, &c.IsActive, &c.CreatedAt,
 		&c.Owner.ID, &c.Owner.PlatformUserID, &c.Owner.PlatformChatID, &c.Owner.ProfileLink, &c.Owner.Username,
-		&c.Owner.Name, &c.Owner.Gender, &c.Owner.PreferredGender, &c.Owner.IsPremium,
+		&c.Owner.Name, &c.Owner.Gender, &c.Owner.PreferredGender, &c.Owner.FlowState, &c.Owner.IsPremium,
 		&c.Owner.Status, &c.Owner.RestrictedUntil, &c.Owner.CreatedAt, &c.Owner.UpdatedAt,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -117,6 +141,23 @@ func (r *Repository) FindCandidate(ctx context.Context, viewerID int64) (*models
 		return nil, err
 	}
 	return &c, nil
+}
+
+func (r *Repository) GetActiveVideoByUser(ctx context.Context, userID int64) (*models.Video, error) {
+	row := r.db.QueryRow(ctx, `
+		select id, user_id, platform_media_id, coalesce(storage_url, ''), duration, is_active, created_at
+		from videos
+		where user_id = $1 and is_active = true
+		order by created_at desc
+		limit 1`, userID)
+	var v models.Video
+	if err := row.Scan(&v.ID, &v.UserID, &v.PlatformMediaID, &v.StorageURL, &v.Duration, &v.IsActive, &v.CreatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return &v, nil
 }
 
 func (r *Repository) CreateView(ctx context.Context, viewerID, videoID, viewedUserID int64, action string) error {
@@ -185,6 +226,64 @@ func (r *Repository) CreateVideoReport(ctx context.Context, reporterID, videoID,
 	return err
 }
 
+func (r *Repository) FindVisibleMatch(ctx context.Context, userID, otherUserID int64) (int64, error) {
+	var matchID int64
+	err := r.db.QueryRow(ctx, `
+		select id from matches
+		where ((user1_id = $1 and user2_id = $2 and hidden_by_user1 = false)
+		    or (user2_id = $1 and user1_id = $2 and hidden_by_user2 = false))
+		limit 1`, userID, otherUserID).Scan(&matchID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, ErrNotFound
+		}
+		return 0, err
+	}
+	return matchID, nil
+}
+
+func (r *Repository) HideMatchForUser(ctx context.Context, userID, otherUserID int64) error {
+	_, err := r.db.Exec(ctx, `
+		update matches set
+			hidden_by_user1 = case when user1_id = $1 then true else hidden_by_user1 end,
+			hidden_by_user2 = case when user2_id = $1 then true else hidden_by_user2 end
+		where (user1_id = $1 and user2_id = $2) or (user2_id = $1 and user1_id = $2)`,
+		userID, otherUserID)
+	return err
+}
+
+func (r *Repository) CreateUserReport(ctx context.Context, reporterID, reportedUserID, matchID int64, reason string) error {
+	_, err := r.db.Exec(ctx, `
+		insert into user_reports (reporter_id, reported_user_id, match_id, reason)
+		values ($1, $2, $3, $4)
+		on conflict (reporter_id, reported_user_id, match_id) do nothing`,
+		reporterID, reportedUserID, matchID, reason)
+	return err
+}
+
+func (r *Repository) ApplyUserReportRestrictions(ctx context.Context, reportedUserID int64) error {
+	var uniqueAll, uniqueWeek int
+	if err := r.db.QueryRow(ctx, `
+		select count(distinct reporter_id)
+		from (
+			select reporter_id, reported_user_id, created_at from video_reports
+			union all
+			select reporter_id, reported_user_id, created_at from user_reports
+		) reports where reported_user_id = $1`, reportedUserID).Scan(&uniqueAll); err != nil {
+		return err
+	}
+	if err := r.db.QueryRow(ctx, `
+		select count(distinct reporter_id)
+		from (
+			select reporter_id, reported_user_id, created_at from video_reports
+			union all
+			select reporter_id, reported_user_id, created_at from user_reports
+		) reports where reported_user_id = $1 and created_at > now() - interval '7 days'`, reportedUserID).Scan(&uniqueWeek); err != nil {
+		return err
+	}
+	return r.restrictByCounts(ctx, reportedUserID, uniqueAll, uniqueWeek)
+}
+
 func (r *Repository) ApplyReportRestrictions(ctx context.Context, reportedUserID int64) error {
 	var uniqueAll, uniqueWeek int
 	if err := r.db.QueryRow(ctx, `select count(distinct reporter_id) from video_reports where reported_user_id = $1`, reportedUserID).Scan(&uniqueAll); err != nil {
@@ -193,26 +292,13 @@ func (r *Repository) ApplyReportRestrictions(ctx context.Context, reportedUserID
 	if err := r.db.QueryRow(ctx, `select count(distinct reporter_id) from video_reports where reported_user_id = $1 and created_at > now() - interval '7 days'`, reportedUserID).Scan(&uniqueWeek); err != nil {
 		return err
 	}
-	var until *time.Time
-	now := time.Now().UTC()
-	if uniqueWeek >= 30 {
-		t := now.Add(72 * time.Hour)
-		until = &t
-	} else if uniqueAll >= 10 {
-		t := now.Add(24 * time.Hour)
-		until = &t
-	}
-	if until == nil {
-		return nil
-	}
-	_, err := r.db.Exec(ctx, `update users set status = 'restricted', restricted_until = $2, updated_at = now() where id = $1`, reportedUserID, until)
-	return err
+	return r.restrictByCounts(ctx, reportedUserID, uniqueAll, uniqueWeek)
 }
 
 func (r *Repository) ListVisibleMatches(ctx context.Context, userID int64) ([]models.User, error) {
 	rows, err := r.db.Query(ctx, `
 		select u.id, u.platform_user_id, u.platform_chat_id, coalesce(u.profile_link, ''), coalesce(u.username, ''),
-		       coalesce(u.name, ''), coalesce(u.gender, ''), coalesce(u.preferred_gender, ''), u.is_premium,
+		       coalesce(u.name, ''), coalesce(u.gender, ''), coalesce(u.preferred_gender, ''), coalesce(u.flow_state, ''), u.is_premium,
 		       u.status, u.restricted_until, u.created_at, u.updated_at
 		from matches m
 		join users u on u.id = case when m.user1_id = $1 then m.user2_id else m.user1_id end
@@ -234,10 +320,83 @@ func (r *Repository) ListVisibleMatches(ctx context.Context, userID int64) ([]mo
 	return users, rows.Err()
 }
 
+func (r *Repository) Stats(ctx context.Context) (map[string]int64, error) {
+	stats := map[string]int64{}
+	queries := map[string]string{
+		"users": "select count(*) from users",
+		"active_users": "select count(*) from users where status = 'active'",
+		"videos": "select count(*) from videos",
+		"likes": "select count(*) from likes",
+		"matches": "select count(*) from matches",
+		"reports": "select (select count(*) from video_reports) + (select count(*) from user_reports)",
+		"premium_users": "select count(*) from users where is_premium = true",
+	}
+	for key, query := range queries {
+		var value int64
+		if err := r.db.QueryRow(ctx, query).Scan(&value); err != nil {
+			return nil, err
+		}
+		stats[key] = value
+	}
+	return stats, nil
+}
+
+func (r *Repository) ListUsers(ctx context.Context, limit int) ([]models.User, error) {
+	rows, err := r.db.Query(ctx, `
+		select id, platform_user_id, platform_chat_id, coalesce(profile_link, ''), coalesce(username, ''),
+		       coalesce(name, ''), coalesce(gender, ''), coalesce(preferred_gender, ''), coalesce(flow_state, ''), is_premium,
+		       status, restricted_until, created_at, updated_at
+		from users
+		order by created_at desc
+		limit $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	users := []models.User{}
+	for rows.Next() {
+		u, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		users = append(users, *u)
+	}
+	return users, rows.Err()
+}
+
+func (r *Repository) SetUserStatus(ctx context.Context, userID int64, status string) error {
+	_, err := r.db.Exec(ctx, `
+		update users set status = $2, restricted_until = null, updated_at = now()
+		where id = $1`, userID, status)
+	return err
+}
+
+func (r *Repository) DeleteActiveVideo(ctx context.Context, userID int64) error {
+	_, err := r.db.Exec(ctx, `update videos set is_active = false where user_id = $1 and is_active = true`, userID)
+	return err
+}
+
+func (r *Repository) restrictByCounts(ctx context.Context, reportedUserID int64, uniqueAll, uniqueWeek int) error {
+	var until *time.Time
+	now := time.Now().UTC()
+	if uniqueWeek >= 30 {
+		t := now.Add(72 * time.Hour)
+		until = &t
+	} else if uniqueAll >= 10 {
+		t := now.Add(24 * time.Hour)
+		until = &t
+	}
+	if until == nil {
+		return nil
+	}
+	_, err := r.db.Exec(ctx, `update users set status = 'restricted', restricted_until = $2, updated_at = now() where id = $1`, reportedUserID, until)
+	return err
+}
+
 func scanUser(row pgx.Row) (*models.User, error) {
 	var u models.User
 	if err := row.Scan(&u.ID, &u.PlatformUserID, &u.PlatformChatID, &u.ProfileLink, &u.Username,
-		&u.Name, &u.Gender, &u.PreferredGender, &u.IsPremium, &u.Status, &u.RestrictedUntil,
+		&u.Name, &u.Gender, &u.PreferredGender, &u.FlowState, &u.IsPremium, &u.Status, &u.RestrictedUntil,
 		&u.CreatedAt, &u.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound

@@ -102,7 +102,7 @@ func initializeBot(ctx context.Context, cfg config.Config, webhook *dynamicWebho
 
 	repo := repositories.New(pool)
 	maxClient := maxapi.NewClient(cfg.MaxAPIBaseURL, cfg.MaxBotToken)
-	botService := services.NewDatingService(repo, maxClient)
+	botService := services.NewDatingService(repo, maxClient, cfg.AdminPlatformIDs)
 	webhook.Set(handlers.NewWebhookHandler(cfg, botService))
 	log.Printf("bot services initialized")
 
