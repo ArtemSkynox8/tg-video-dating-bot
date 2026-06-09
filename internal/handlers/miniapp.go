@@ -415,6 +415,10 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
     const returnButton = document.getElementById("returnButton");
     const maxDuration = 30;
     let stream, recorder, chunks = [], startedAt = 0, tick = 0, drawTick = 0, stopped = false, holding = false, starting = false;
+    const chatBg = new Image();
+    chatBg.src = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
+      ? "/assets/recorder-theme/light.jpg"
+      : "/assets/recorder-theme/dark.jpg";
 
     function setStatus(text) { statusEl.textContent = text; }
     function format(seconds) {
@@ -511,9 +515,21 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
       canvas.width = 720;
       canvas.height = 720;
       const ctx = canvas.getContext("2d");
-      const draw = () => {
-        ctx.fillStyle = "#101820";
+      function drawBackground() {
+        ctx.fillStyle = "#8ccff4";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
+        if (!chatBg.complete || !chatBg.naturalWidth) return;
+        const imageSide = Math.min(chatBg.naturalWidth, chatBg.naturalHeight);
+        const sx = (chatBg.naturalWidth - imageSide) / 2;
+        const sy = (chatBg.naturalHeight - imageSide) / 2;
+        ctx.save();
+        ctx.filter = "blur(14px)";
+        ctx.globalAlpha = .88;
+        ctx.drawImage(chatBg, sx, sy, imageSide, imageSide, -28, -28, canvas.width + 56, canvas.height + 56);
+        ctx.restore();
+      }
+      const draw = () => {
+        drawBackground();
         const vw = preview.videoWidth || 720;
         const vh = preview.videoHeight || 720;
         const side = Math.min(vw, vh);
