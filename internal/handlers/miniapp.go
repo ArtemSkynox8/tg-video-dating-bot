@@ -28,9 +28,17 @@ func NewMiniAppHandler(cfg config.Config, repo *repositories.Repository, max *ma
 }
 
 func (h *MiniAppHandler) Register(mux *http.ServeMux) {
+	mux.HandleFunc("GET /mini/open", h.openPage)
 	mux.HandleFunc("GET /mini/record", h.recordPage)
 	mux.HandleFunc("POST /mini/upload", h.upload)
 	mux.Handle("/media/", http.StripPrefix("/media/", http.FileServer(http.Dir(h.cfg.UploadDir))))
+}
+
+func (h *MiniAppHandler) openPage(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = miniOpenTemplate.Execute(w, map[string]string{
+		"RecordURL": strings.TrimRight(h.cfg.PublicBaseURL, "/") + "/mini/record",
+	})
 }
 
 func (h *MiniAppHandler) recordPage(w http.ResponseWriter, r *http.Request) {
@@ -120,6 +128,89 @@ func (h *MiniAppHandler) upload(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write([]byte(`{"ok":true}`))
 }
+
+var miniOpenTemplate = template.Must(template.New("mini-open").Parse(`<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Запись кружка</title>
+  <script src="https://st.max.ru/js/max-web-app.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: #101820;
+      color: #fff;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    main {
+      width: min(100vw, 480px);
+      padding: 28px 22px;
+      display: grid;
+      gap: 18px;
+      text-align: center;
+    }
+    h1 { margin: 0; font-size: 28px; letter-spacing: 0; }
+    p { margin: 0; color: rgba(255,255,255,.74); font-size: 16px; line-height: 1.4; }
+    a, button {
+      width: 100%;
+      min-height: 58px;
+      border: 0;
+      border-radius: 16px;
+      display: inline-grid;
+      place-items: center;
+      background: #2f8cff;
+      color: #fff;
+      font: inherit;
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .ghost { background: rgba(255,255,255,.12); }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Запись кружка</h1>
+    <p>MAX не всегда дает камеру внутри мини-приложения. Откройте запись в браузере, разрешите камеру и удерживайте красную кнопку.</p>
+    <a id="openRecorder" href="{{.RecordURL}}" target="_blank" rel="noopener">Открыть запись</a>
+    <button id="closeApp" class="ghost" type="button">Вернуться в бот</button>
+  </main>
+  <script>
+    const baseRecordURL = "{{.RecordURL}}";
+    const openRecorder = document.getElementById("openRecorder");
+    const closeApp = document.getElementById("closeApp");
+
+    function resolveUserId() {
+      const unsafe = window.WebApp && window.WebApp.initDataUnsafe;
+      const bridgeUser = unsafe && unsafe.user && unsafe.user.id;
+      return bridgeUser ? String(bridgeUser) : "";
+    }
+
+    function ready() {
+      if (window.WebApp && WebApp.ready) WebApp.ready();
+      const userId = resolveUserId();
+      if (userId) {
+        openRecorder.href = baseRecordURL + "?u=" + encodeURIComponent(userId);
+      }
+    }
+
+    openRecorder.addEventListener("click", () => {
+      if (window.WebApp && WebApp.openLink) {
+        WebApp.openLink(openRecorder.href);
+      }
+    });
+    closeApp.addEventListener("click", () => {
+      if (window.WebApp && WebApp.close) WebApp.close();
+      else window.close();
+    });
+    ready();
+  </script>
+</body>
+</html>`))
 
 var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doctype html>
 <html lang="ru">
