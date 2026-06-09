@@ -41,63 +41,33 @@ func (c *Client) SendText(ctx context.Context, userID, text string, buttons [][]
 }
 
 func (c *Client) SendMedia(ctx context.Context, userID, mediaID, caption string, buttons [][]Button) (string, error) {
-	return c.SendMediaToDialogOrUser(ctx, "", userID, mediaID, caption, buttons)
+	return c.sendVideo(ctx, "/messages?user_id="+url.QueryEscape(userID), mediaID, caption, buttons)
 }
 
 func (c *Client) SendMediaToDialogOrUser(ctx context.Context, dialogID, userID, mediaID, caption string, buttons [][]Button) (string, error) {
-	videoMessageID, err := c.SendMugToDialogOrUser(ctx, dialogID, userID, mediaID)
-	if err != nil {
-		return "", err
-	}
-	if caption == "" && len(buttons) == 0 {
-		return videoMessageID, nil
-	}
-	time.Sleep(1200 * time.Millisecond)
-	if err := c.SendText(ctx, userID, caption, buttons); err != nil {
-		return "", err
-	}
-	return videoMessageID, nil
-}
-
-func (c *Client) SendMug(ctx context.Context, userID, mediaID string) (string, error) {
-	return c.SendMugToDialogOrUser(ctx, "", userID, mediaID)
-}
-
-func (c *Client) SendMugToDialogOrUser(ctx context.Context, dialogID, userID, mediaID string) (string, error) {
-	if userID != "" {
-		messageID, err := c.sendMug(ctx, "/messages?chat_id="+url.QueryEscape(userID), mediaID)
-		if err == nil {
-			log.Printf("send mug only event_chat=%s token=%s", userID, mediaID)
-			return messageID, nil
-		}
-		log.Printf("send mug by event chat failed chat=%s token=%s: %v", userID, mediaID, err)
-	}
 	if dialogID != "" {
-		messageID, err := c.sendMug(ctx, "/messages?chat_id="+url.QueryEscape(dialogID), mediaID)
+		messageID, err := c.sendVideo(ctx, "/messages?chat_id="+url.QueryEscape(dialogID), mediaID, caption, buttons)
 		if err == nil {
-			log.Printf("send mug only recipient_chat=%s user=%s token=%s", dialogID, userID, mediaID)
 			return messageID, nil
 		}
-		log.Printf("send mug by recipient chat failed chat=%s user=%s token=%s: %v", dialogID, userID, mediaID, err)
+		log.Printf("send video by recipient chat failed chat=%s user=%s token=%s: %v", dialogID, userID, mediaID, err)
 	}
-	messageID, err := c.sendMug(ctx, "/messages?user_id="+url.QueryEscape(userID), mediaID)
-	if err != nil {
-		return "", err
+	if userID != "" {
+		return c.sendVideo(ctx, "/messages?user_id="+url.QueryEscape(userID), mediaID, caption, buttons)
 	}
-	log.Printf("send mug only user=%s token=%s", userID, mediaID)
-	return messageID, nil
+	return "", fmt.Errorf("missing recipient for media message")
 }
 
-func (c *Client) sendMug(ctx context.Context, path, mediaID string) (string, error) {
-	payload := map[string]any{
-		"token":      mediaID,
-		"format":     "mug",
-		"quickVideo": true,
-	}
+func (c *Client) sendVideo(ctx context.Context, path, mediaID, caption string, buttons [][]Button) (string, error) {
+	payload := map[string]any{"token": mediaID}
 	body := map[string]any{
+		"text": caption,
 		"attachments": []map[string]any{
-			{"type": "video", "payload": payload, "format": "mug", "quickVideo": true},
+			{"type": "video", "payload": payload},
 		},
+	}
+	if len(buttons) > 0 {
+		body["attachments"] = append(body["attachments"].([]map[string]any), inlineKeyboard(buttons)...)
 	}
 	var out struct {
 		Message Message `json:"message"`

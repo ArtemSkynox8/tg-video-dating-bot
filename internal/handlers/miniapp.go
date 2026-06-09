@@ -240,33 +240,6 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
       justify-content: center;
       gap: 22px;
     }
-    .intro {
-      width: min(100vw, 480px);
-      min-height: 100vh;
-      padding: 28px 20px;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 22px;
-      text-align: center;
-    }
-    .intro.hidden,
-    main.hidden {
-      display: none;
-    }
-    .start-recording {
-      min-height: 58px;
-      padding: 0 24px;
-      border: 0;
-      border-radius: 16px;
-      background: #1683ff;
-      color: #fff;
-      font: inherit;
-      font-size: 18px;
-      font-weight: 800;
-      box-shadow: 0 14px 38px rgba(22,131,255,.32);
-    }
     .preview {
       --progress: 0%;
       width: min(78vw, 320px);
@@ -416,13 +389,7 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
   </style>
 </head>
 <body>
-  <section id="intro" class="intro">
-    <div class="preview"><video autoplay muted playsinline></video></div>
-    <button id="startRecorder" class="start-recording" type="button">Записать кружок</button>
-    <p>Нажмите кнопку, разрешите камеру и микрофон, затем удерживайте красную кнопку записи.</p>
-    <p id="introStatus" class="status"></p>
-  </section>
-  <main id="recorder" class="hidden">
+  <main>
     <div class="preview"><video id="preview" autoplay muted playsinline></video></div>
     <div id="timer" class="timer">00:00</div>
     <button id="record" class="record" aria-label="Записать"></button>
@@ -480,10 +447,6 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
     }
     const userId = resolveUserId();
     const returnToBotURL = "{{.ReturnToBot}}";
-    const intro = document.getElementById("intro");
-    const introStatus = document.getElementById("introStatus");
-    const startRecorderButton = document.getElementById("startRecorder");
-    const recorderEl = document.getElementById("recorder");
     const preview = document.getElementById("preview");
     const previewRing = document.querySelector(".preview");
     const button = document.getElementById("record");
@@ -505,7 +468,6 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
       : "/assets/recorder-theme/dark.jpg";
 
     function setStatus(text) { statusEl.textContent = text; }
-    function setIntroStatus(text) { introStatus.textContent = text; }
     function format(seconds) {
       return String(Math.floor(seconds / 60)).padStart(2, "0") + ":" + String(seconds % 60).padStart(2, "0");
     }
@@ -536,14 +498,11 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
     async function init() {
       if (window.WebApp && WebApp.ready) WebApp.ready();
       if (!userId) {
-        setIntroStatus("Откройте запись из кнопки бота в MAX.");
         setStatus("Откройте запись из кнопки бота в MAX.");
-        startRecorderButton.disabled = true;
         button.disabled = true;
         return;
       }
-      setIntroStatus("Нажмите кнопку, чтобы запросить камеру.");
-      setStatus("После доступа к камере удерживайте красную кнопку.");
+      setStatus("Нажмите красную кнопку, чтобы разрешить камеру.");
     }
     function getUserMediaCompat(constraints) {
       if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
@@ -615,24 +574,10 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
         const reason = mediaErrorLabel(videoError);
         console.warn("camera permission failed", videoError);
         setStatus("MAX не открыл встроенную камеру: " + reason + ". Откроется системная запись видео.");
-        setIntroStatus("MAX не открыл встроенную камеру: " + reason + ".");
         fallbackButton.classList.add("show");
         fallbackFile.click();
         return false;
       }
-    }
-    async function prepareRecorder() {
-      startRecorderButton.disabled = true;
-      setIntroStatus("Запрашиваем доступ к камере...");
-      recorderEl.classList.remove("hidden");
-      const ok = await ensureAudioVideoStream();
-      if (ok) {
-        intro.classList.add("hidden");
-        setStatus(stream.getAudioTracks().length ? "Камера готова. Удерживайте красную кнопку." : "Камера готова, но микрофон не подключился.");
-        return;
-      }
-      startRecorderButton.disabled = false;
-      setIntroStatus("Камера недоступна. Можно выбрать видео вручную.");
     }
     function buildCircleStream() {
       const canvas = document.createElement("canvas");
@@ -803,7 +748,6 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
       }
       await uploadBlob(file, 0, file.name || "circle.mp4");
     });
-    startRecorderButton.addEventListener("click", prepareRecorder);
     fallbackButton.addEventListener("click", () => fallbackFile.click());
     button.addEventListener("pointerdown", start);
     button.addEventListener("pointerup", stop);

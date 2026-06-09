@@ -18,11 +18,10 @@ type DatingService struct {
 	max      *maxapi.Client
 	adminIDs []string
 	publicBaseURL string
-	maxAppURL     string
 }
 
-func NewDatingService(repo *repositories.Repository, max *maxapi.Client, adminIDs []string, publicBaseURL, maxAppURL string) *DatingService {
-	return &DatingService{repo: repo, max: max, adminIDs: adminIDs, publicBaseURL: strings.TrimRight(publicBaseURL, "/"), maxAppURL: strings.TrimRight(maxAppURL, "/")}
+func NewDatingService(repo *repositories.Repository, max *maxapi.Client, adminIDs []string, publicBaseURL string) *DatingService {
+	return &DatingService{repo: repo, max: max, adminIDs: adminIDs, publicBaseURL: strings.TrimRight(publicBaseURL, "/")}
 }
 
 func (s *DatingService) HandleMessage(ctx context.Context, msg maxapi.MessageUpdate) error {
@@ -57,7 +56,7 @@ func (s *DatingService) HandleMessage(ctx context.Context, msg maxapi.MessageUpd
 		if err := s.repo.SetFlowState(ctx, user.ID, models.StateAwaitingRewriteVideo); err != nil {
 			return err
 		}
-		return s.SendRecordPrompt(ctx, *user, "Запишите новый кружок в мини-приложении.")
+		return s.SendRecordPrompt(ctx, *user, "Запишите новый кружок на странице записи.")
 	case text == "/tester_reset_me":
 		return s.ResetMe(ctx, *user)
 	case text == "/admin_reset_store confirm" && s.isAdmin(*user):
@@ -70,8 +69,6 @@ func (s *DatingService) HandleMessage(ctx context.Context, msg maxapi.MessageUpd
 		return s.SendNextCandidate(ctx, *user)
 	case len(msg.Media) > 0:
 		return s.HandleMedia(ctx, *user, msg.Media[0])
-	case msg.Link.Type == "forward":
-		return s.max.SendText(ctx, user.PlatformChatID, "MAX переслал сообщение, но не передал видеофайл боту. Отправьте видео через кнопку «Выбрать видео» в мини-приложении или прикрепите его как обычное видео/файл.", s.recordButtons(*user))
 	case user.FlowState == models.StateAwaitingName:
 		return s.SaveNameStep(ctx, *user, text)
 	case user.FlowState == models.StateAwaitingEditName:
@@ -147,7 +144,7 @@ func (s *DatingService) HandleCallback(ctx context.Context, cb maxapi.CallbackUp
 		if err := s.repo.SetFlowState(ctx, user.ID, models.StateAwaitingRewriteVideo); err != nil {
 			return err
 		}
-		return s.SendRecordPrompt(ctx, *user, "Запишите новый кружок в мини-приложении. Старое видео станет неактивным.")
+		return s.SendRecordPrompt(ctx, *user, "Запишите новый кружок на странице записи. Старое видео станет неактивным.")
 	case "edit_profile":
 		return s.max.SendText(ctx, cb.Chat.ID, "Что изменить?", editProfileButtons())
 	case "edit_name":
@@ -211,7 +208,7 @@ func (s *DatingService) SendCommands(ctx context.Context, user models.User) erro
 }
 
 func (s *DatingService) SendRecordPrompt(ctx context.Context, user models.User, text string) error {
-	return s.max.SendText(ctx, user.PlatformChatID, text+"\n\nОткройте мини-приложение, разрешите камеру и удерживайте красную кнопку.", s.recordButtons(user))
+	return s.max.SendText(ctx, user.PlatformChatID, text+"\n\nОткройте запись в браузере, разрешите камеру и удерживайте красную кнопку.", s.recordButtons(user))
 }
 
 func (s *DatingService) ResetMe(ctx context.Context, user models.User) error {
@@ -314,7 +311,7 @@ func (s *DatingService) SavePreferredGenderStep(ctx context.Context, user models
 	if err := s.repo.SetFlowState(ctx, user.ID, models.StateAwaitingVideo); err != nil {
 		return err
 	}
-	return s.SendRecordPrompt(ctx, user, "Запишите короткий кружок до 60 секунд.")
+	return s.SendRecordPrompt(ctx, user, "Запишите короткий кружок до 30 секунд.")
 }
 
 func (s *DatingService) HandleMedia(ctx context.Context, user models.User, media maxapi.Media) error {
@@ -726,33 +723,11 @@ func editProfileButtons() [][]maxapi.Button {
 }
 
 func (s *DatingService) recordButtons(user models.User) [][]maxapi.Button {
-	return [][]maxapi.Button{{{Text: "🎥 Открыть запись", URL: s.recordURL(), Payload: user.PlatformUserID, OpenApp: true}}}
+	return [][]maxapi.Button{{{Text: "🎥 Открыть запись", URL: s.recordURL(user)}}}
 }
 
-func (s *DatingService) recordURL() string {
-	app := normalizeMaxAppLink(s.maxAppURL)
-	if app != "" {
-		return app
-	}
-	return "id550411830268_1_bot"
-}
-
-func normalizeMaxAppLink(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return ""
-	}
-	value = strings.TrimRight(value, "/")
-	if strings.HasPrefix(value, "https://max.ru/") {
-		return strings.TrimPrefix(value, "https://max.ru/")
-	}
-	if strings.HasPrefix(value, "http://max.ru/") {
-		return strings.TrimPrefix(value, "http://max.ru/")
-	}
-	if strings.Contains(value, "/") || strings.Contains(value, ".") {
-		return ""
-	}
-	return value
+func (s *DatingService) recordURL(user models.User) string {
+	return s.publicBaseURL + "/mini/record?u=" + user.PlatformUserID
 }
 
 func mainMenuButtons() [][]maxapi.Button {

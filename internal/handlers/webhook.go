@@ -3,7 +3,6 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -32,13 +31,8 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, readErr := io.ReadAll(r.Body)
-	if readErr != nil {
-		http.Error(w, "bad update", http.StatusBadRequest)
-		return
-	}
 	var update maxapi.Update
-	if err := json.Unmarshal(body, &update); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
 		http.Error(w, "bad update", http.StatusBadRequest)
 		return
 	}
@@ -49,11 +43,8 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "message_created":
 		if update.Message != nil {
 			msg := normalizeMessage(update)
-			log.Printf("max update message_created user=%s chat=%s sender=%s recipient_chat=%s recipient_user=%s attachments=%d media=%d link=%s text=%q",
-				msg.From.ID, msg.Chat.ID, update.Message.Sender.ID, update.Message.Recipient.ChatID, update.Message.Recipient.UserID, len(update.Message.Body.Attachments), len(msg.Media), msg.Link.Type, msg.Text)
-			if msg.Text == "" && len(update.Message.Body.Attachments) == 0 {
-				log.Printf("max empty message raw=%s", limitLog(string(body), 2500))
-			}
+			log.Printf("max update message_created user=%s chat=%s sender=%s recipient_chat=%s recipient_user=%s attachments=%d media=%d text=%q",
+				msg.From.ID, msg.Chat.ID, update.Message.Sender.ID, update.Message.Recipient.ChatID, update.Message.Recipient.UserID, len(update.Message.Body.Attachments), len(msg.Media), msg.Text)
 			err = h.service.HandleMessage(ctx, msg)
 		}
 	case "bot_started":
@@ -106,7 +97,6 @@ func normalizeMessage(update maxapi.Update) maxapi.MessageUpdate {
 		From:      from,
 		Text:      message.Body.Text,
 		Media:     normalizeMedia(message.Body.Attachments),
-		Link:      message.Link,
 	}
 }
 
@@ -136,7 +126,6 @@ func normalizeCallback(update maxapi.Update) maxapi.CallbackUpdate {
 func normalizeMedia(attachments []maxapi.Attachment) []maxapi.Media {
 	media := make([]maxapi.Media, 0, len(attachments))
 	for _, attachment := range attachments {
-		log.Printf("max attachment type=%s payload_keys=%s", attachment.Type, payloadKeys(attachment.Payload))
 		if attachment.Type != "video" && attachment.Type != "file" {
 			continue
 		}
@@ -185,20 +174,4 @@ func parsePayloadInt(value any, keys []string) int {
 		return out / 1000
 	}
 	return out
-}
-
-func payloadKeys(payload map[string]any) string {
-	keys := make([]string, 0, len(payload))
-	for key := range payload {
-		keys = append(keys, key)
-	}
-	return strings.Join(keys, ",")
-}
-
-func limitLog(value string, max int) string {
-	value = strings.ReplaceAll(value, "\n", "")
-	if len(value) <= max {
-		return value
-	}
-	return value[:max]
 }
