@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -25,17 +26,17 @@ func NewClient(baseURL, token string) *Client {
 	}
 }
 
-func (c *Client) SendText(ctx context.Context, chatID, text string, buttons [][]Button) error {
+func (c *Client) SendText(ctx context.Context, userID, text string, buttons [][]Button) error {
 	body := map[string]any{
 		"text": text,
 	}
 	if len(buttons) > 0 {
 		body["attachments"] = inlineKeyboard(buttons)
 	}
-	return c.post(ctx, "/messages?chat_id="+url.QueryEscape(chatID), body, nil)
+	return c.post(ctx, "/messages?user_id="+url.QueryEscape(userID), body, nil)
 }
 
-func (c *Client) SendMedia(ctx context.Context, chatID, mediaID, caption string, buttons [][]Button) (string, error) {
+func (c *Client) SendMedia(ctx context.Context, userID, mediaID, caption string, buttons [][]Button) (string, error) {
 	payload := map[string]any{"token": mediaID}
 	if strings.HasPrefix(mediaID, "http://") || strings.HasPrefix(mediaID, "https://") {
 		payload = map[string]any{"url": mediaID}
@@ -52,7 +53,7 @@ func (c *Client) SendMedia(ctx context.Context, chatID, mediaID, caption string,
 	var out struct {
 		Message Message `json:"message"`
 	}
-	if err := c.post(ctx, "/messages?chat_id="+url.QueryEscape(chatID), body, &out); err != nil {
+	if err := c.post(ctx, "/messages?user_id="+url.QueryEscape(userID), body, &out); err != nil {
 		return "", err
 	}
 	return out.Message.Body.MID, nil
@@ -97,7 +98,8 @@ func (c *Client) post(ctx context.Context, path string, in any, out any) error {
 	}
 	defer res.Body.Close()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return fmt.Errorf("max api %s failed: %s", path, res.Status)
+		detail, _ := io.ReadAll(io.LimitReader(res.Body, 2048))
+		return fmt.Errorf("max api %s failed: %s: %s", path, res.Status, strings.TrimSpace(string(detail)))
 	}
 	if out == nil {
 		return nil
