@@ -39,8 +39,29 @@ func (s *DatingService) HandleMessage(ctx context.Context, msg maxapi.MessageUpd
 	switch {
 	case text == "/start":
 		return s.Start(ctx, *user)
+	case text == "/commands" || text == "/help":
+		return s.SendCommands(ctx, *user)
 	case text == "/admin" && s.isAdmin(*user):
 		return s.SendAdminPanel(ctx, *user)
+	case text == "/botstats" && s.isAdmin(*user):
+		return s.SendStats(ctx, *user)
+	case text == "/admin_list" && s.isAdmin(*user):
+		return s.max.SendText(ctx, user.PlatformChatID, "Админы: "+strings.Join(s.adminIDs, ", "), nil)
+	case text == "/payments" && s.isAdmin(*user):
+		return s.max.SendText(ctx, user.PlatformChatID, "Платежи пока не подключены.", nil)
+	case text == "/errors" && s.isAdmin(*user):
+		return s.max.SendText(ctx, user.PlatformChatID, "Ошибки смотрим в runtime logs Timeweb.", nil)
+	case text == "/record":
+		if err := s.repo.SetFlowState(ctx, user.ID, models.StateAwaitingRewriteVideo); err != nil {
+			return err
+		}
+		return s.SendRecordPrompt(ctx, *user, "Запишите новый кружок в мини-приложении.")
+	case text == "/tester_reset_me":
+		return s.ResetMe(ctx, *user)
+	case text == "/admin_reset_store confirm" && s.isAdmin(*user):
+		return s.AdminResetStore(ctx, *user)
+	case strings.HasPrefix(text, "/user ") && s.isAdmin(*user):
+		return s.SendUserCard(ctx, *user, strings.TrimSpace(strings.TrimPrefix(text, "/user ")))
 	case strings.HasPrefix(text, "📬 Взаимные лайки"):
 		return s.SendMatches(ctx, *user)
 	case text == "▶️ Начать просмотр" || text == "/browse":
@@ -62,6 +83,9 @@ func (s *DatingService) HandleCallback(ctx context.Context, cb maxapi.CallbackUp
 	user, err := s.repo.GetUserByPlatformID(ctx, cb.From.ID)
 	if err != nil {
 		return err
+	}
+	if cb.Chat.ID == "" {
+		cb.Chat.ID = user.PlatformChatID
 	}
 	parts := strings.Split(cb.Payload, ":")
 	if len(parts) == 0 {
@@ -109,7 +133,7 @@ func (s *DatingService) HandleCallback(ctx context.Context, cb maxapi.CallbackUp
 		if err := s.repo.SetFlowState(ctx, user.ID, models.StateAwaitingRewriteVideo); err != nil {
 			return err
 		}
-		return s.max.SendText(ctx, cb.Chat.ID, "Запишите новый кружок в мини-приложении. Старое видео станет неактивным.", s.recordButtons(user))
+		return s.SendRecordPrompt(ctx, *user, "Запишите новый кружок в мини-приложении. Старое видео станет неактивным.")
 	case "edit_profile":
 		return s.max.SendText(ctx, cb.Chat.ID, "Что изменить?", editProfileButtons())
 	case "edit_name":
@@ -155,6 +179,43 @@ func (s *DatingService) Start(ctx context.Context, user models.User) error {
 		return s.max.SendText(ctx, user.PlatformChatID, "Привет. Заполним анкету: отправьте имя от 2 до 30 символов.", nil)
 	}
 	return s.max.SendText(ctx, user.PlatformChatID, "Вы уже зарегистрированы. Выберите действие.", mainMenuButtons())
+}
+
+func (s *DatingService) SendCommands(ctx context.Context, user models.User) error {
+	text := strings.Join([]string{
+		"Команды:",
+		"/start - открыть бот",
+		"/commands - список команд",
+		"/browse - начать просмотр",
+		"/record - записать или перезаписать кружок",
+		"/tester_reset_me - очистить свой профиль",
+		"/admin - админ-панель",
+		"/user id - карточка пользователя",
+		"/admin_reset_store confirm - полностью очистить базу",
+	}, "\n")
+	return s.max.SendText(ctx, user.PlatformChatID, text, mainMenuButtons())
+}
+
+func (s *DatingService) SendRecordPrompt(ctx context.Context, user models.User, text string) error {
+	recordURL := s.recordURL(user)
+	return s.max.SendText(ctx, user.PlatformChatID, text+"\n\nСсылка для записи:\n"+recordURL, s.recordButtons(user))
+}
+
+func (s *DatingService) ResetMe(ctx context.Context, user models.User) error {
+	if err := s.repo.ResetUser(ctx, user.ID); err != nil {
+		return err
+	}
+	if err := s.repo.SetFlowState(ctx, user.ID, models.StateAwaitingName); err != nil {
+		return err
+	}
+	return s.max.SendText(ctx, user.PlatformChatID, "Ваш профиль очищен. Заполним анкету заново: отправьте имя от 2 до 30 символов.", nil)
+}
+
+func (s *DatingService) AdminResetStore(ctx context.Context, user models.User) error {
+	if err := s.repo.ClearAllData(ctx); err != nil {
+		return err
+	}
+	return s.max.SendText(ctx, user.PlatformChatID, "База полностью очищена.", nil)
 }
 
 func (s *DatingService) SaveNameStep(ctx context.Context, user models.User, name string) error {
@@ -222,7 +283,7 @@ func (s *DatingService) SavePreferredGenderStep(ctx context.Context, user models
 	if err := s.repo.SetFlowState(ctx, user.ID, models.StateAwaitingVideo); err != nil {
 		return err
 	}
-	return s.max.SendText(ctx, user.PlatformChatID, "Запишите короткий кружок до 60 секунд.", s.recordButtons(user))
+	return s.SendRecordPrompt(ctx, user, "Запишите короткий кружок до 60 секунд.")
 }
 
 func (s *DatingService) HandleMedia(ctx context.Context, user models.User, media maxapi.Media) error {
@@ -264,7 +325,7 @@ func (s *DatingService) SendNextCandidate(ctx context.Context, user models.User)
 			if setErr := s.repo.SetFlowState(ctx, user.ID, models.StateAwaitingVideo); setErr != nil {
 				return setErr
 			}
-		return s.max.SendText(ctx, user.PlatformChatID, "Сначала запишите свой кружок.", s.recordButtons(user))
+			return s.SendRecordPrompt(ctx, user, "Сначала запишите свой кружок.")
 		}
 		return err
 	}
@@ -419,9 +480,53 @@ func (s *DatingService) HandleUserReport(ctx context.Context, user models.User, 
 }
 
 func (s *DatingService) SendAdminPanel(ctx context.Context, user models.User) error {
-	return s.max.SendText(ctx, user.PlatformChatID, "Админ-панель:", [][]maxapi.Button{
+	text := strings.Join([]string{
+		"Админ-панель:",
+		"/admin - меню админа",
+		"/commands - все команды",
+		"/botstats - общая статистика",
+		"/user id - карточка пользователя",
+		"/tester_reset_me - очистить свой профиль",
+		"/admin_reset_store confirm - полностью очистить базу бота",
+	}, "\n")
+	return s.max.SendText(ctx, user.PlatformChatID, text, [][]maxapi.Button{
 		{{Text: "📊 Статистика", Payload: "admin:stats"}, {Text: "👥 Пользователи", Payload: "admin:users"}},
+		{{Text: "🧹 Очистить мой профиль", Payload: "admin:reset_me"}},
 	})
+}
+
+func (s *DatingService) SendStats(ctx context.Context, user models.User) error {
+	stats, err := s.repo.Stats(ctx)
+	if err != nil {
+		return err
+	}
+	return s.max.SendText(ctx, user.PlatformChatID, fmt.Sprintf(
+		"📊 Статистика\nВсего пользователей: %d\nАктивных: %d\nВидео: %d\nЛайков: %d\nMatches: %d\nЖалоб: %d\nPremium: %d",
+		stats["users"], stats["active_users"], stats["videos"], stats["likes"], stats["matches"], stats["reports"], stats["premium_users"],
+	), nil)
+}
+
+func (s *DatingService) SendUserCard(ctx context.Context, admin models.User, idText string) error {
+	target, err := s.repo.GetUserByID(ctx, parseID(idText))
+	if err != nil {
+		if err == repositories.ErrNotFound {
+			return s.max.SendText(ctx, admin.PlatformChatID, "Пользователь не найден.", nil)
+		}
+		return err
+	}
+	videoStatus := "нет"
+	if _, err := s.repo.GetActiveVideoByUser(ctx, target.ID); err == nil {
+		videoStatus = "есть"
+	}
+	text := fmt.Sprintf(
+		"Карточка пользователя #%d\nplatform_user_id: %s\nchat_id: %s\nname: %s\nusername: %s\ngender: %s\npreferred: %s\nstatus: %s\nflow_state: %s\nactive_video: %s",
+		target.ID, target.PlatformUserID, target.PlatformChatID, target.Name, target.Username, target.Gender, target.PreferredGender, target.Status, target.FlowState, videoStatus,
+	)
+	return s.max.SendText(ctx, admin.PlatformChatID, text, [][]maxapi.Button{{
+		{Text: "🚫 Заблокировать", Payload: fmt.Sprintf("admin:block:%d", target.ID)},
+		{Text: "✅ Разблокировать", Payload: fmt.Sprintf("admin:unblock:%d", target.ID)},
+		{Text: "🗑 Удалить видео", Payload: fmt.Sprintf("admin:delete_video:%d", target.ID)},
+	}})
 }
 
 func (s *DatingService) HandleAdmin(ctx context.Context, user models.User, parts []string) error {
@@ -430,14 +535,7 @@ func (s *DatingService) HandleAdmin(ctx context.Context, user models.User, parts
 	}
 	switch parts[1] {
 	case "stats":
-		stats, err := s.repo.Stats(ctx)
-		if err != nil {
-			return err
-		}
-		return s.max.SendText(ctx, user.PlatformChatID, fmt.Sprintf(
-			"📊 Статистика\nВсего пользователей: %d\nАктивных: %d\nВидео: %d\nЛайков: %d\nMatches: %d\nЖалоб: %d\nPremium: %d",
-			stats["users"], stats["active_users"], stats["videos"], stats["likes"], stats["matches"], stats["reports"], stats["premium_users"],
-		), nil)
+		return s.SendStats(ctx, user)
 	case "users":
 		users, err := s.repo.ListUsers(ctx, 20)
 		if err != nil {
@@ -454,6 +552,8 @@ func (s *DatingService) HandleAdmin(ctx context.Context, user models.User, parts
 			})
 		}
 		return s.max.SendText(ctx, user.PlatformChatID, strings.Join(lines, "\n"), buttons)
+	case "reset_me":
+		return s.ResetMe(ctx, user)
 	case "block":
 		if len(parts) == 3 {
 			if err := s.repo.SetUserStatus(ctx, parseID(parts[2]), models.StatusBlocked); err != nil {
@@ -594,8 +694,11 @@ func editProfileButtons() [][]maxapi.Button {
 }
 
 func (s *DatingService) recordButtons(user models.User) [][]maxapi.Button {
-	url := s.publicBaseURL + "/mini/record?u=" + user.PlatformUserID
-	return [][]maxapi.Button{{{Text: "🎥 Записать кружок", URL: url}}}
+	return [][]maxapi.Button{{{Text: "🎥 Записать кружок", URL: s.recordURL(user)}}}
+}
+
+func (s *DatingService) recordURL(user models.User) string {
+	return s.publicBaseURL + "/mini/record?u=" + user.PlatformUserID
 }
 
 func mainMenuButtons() [][]maxapi.Button {

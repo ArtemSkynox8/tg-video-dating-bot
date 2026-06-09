@@ -29,6 +29,15 @@ func (r *Repository) GetUserByPlatformID(ctx context.Context, platformUserID str
 	return scanUser(row)
 }
 
+func (r *Repository) GetUserByID(ctx context.Context, userID int64) (*models.User, error) {
+	row := r.db.QueryRow(ctx, `
+		select id, platform_user_id, platform_chat_id, coalesce(profile_link, ''), coalesce(username, ''),
+		       coalesce(name, ''), coalesce(gender, ''), coalesce(preferred_gender, ''), coalesce(flow_state, ''), is_premium,
+		       status, restricted_until, created_at, updated_at
+		from users where id = $1`, userID)
+	return scanUser(row)
+}
+
 func (r *Repository) UpsertPlatformUser(ctx context.Context, user models.User) (*models.User, error) {
 	row := r.db.QueryRow(ctx, `
 		insert into users (platform_user_id, platform_chat_id, profile_link, username, status)
@@ -373,6 +382,63 @@ func (r *Repository) SetUserStatus(ctx context.Context, userID int64, status str
 
 func (r *Repository) DeleteActiveVideo(ctx context.Context, userID int64) error {
 	_, err := r.db.Exec(ctx, `update videos set is_active = false where user_id = $1 and is_active = true`, userID)
+	return err
+}
+
+func (r *Repository) ResetUser(ctx context.Context, userID int64) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `delete from priority_queue where target_user_id = $1 or candidate_user_id = $1`, userID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `delete from user_reports where reporter_id = $1 or reported_user_id = $1`, userID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `delete from video_reports where reporter_id = $1 or reported_user_id = $1`, userID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `delete from matches where user1_id = $1 or user2_id = $1`, userID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `delete from likes where from_user_id = $1 or to_user_id = $1`, userID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `delete from views where viewer_id = $1 or viewed_user_id = $1`, userID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `delete from premium_payments where user_id = $1`, userID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `delete from videos where user_id = $1`, userID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		update users set name = null, gender = null, preferred_gender = null,
+			flow_state = '', is_premium = false, status = 'active',
+			restricted_until = null, updated_at = now()
+		where id = $1`, userID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (r *Repository) ClearAllData(ctx context.Context) error {
+	_, err := r.db.Exec(ctx, `
+		truncate table
+			user_action_logs,
+			premium_payments,
+			user_reports,
+			video_reports,
+			priority_queue,
+			matches,
+			likes,
+			views,
+			videos,
+			users
+		restart identity cascade`)
 	return err
 }
 
