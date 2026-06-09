@@ -40,19 +40,29 @@ func (c *Client) SendText(ctx context.Context, userID, text string, buttons [][]
 }
 
 func (c *Client) SendMedia(ctx context.Context, userID, mediaID, caption string, buttons [][]Button) (string, error) {
+	videoMessageID, err := c.SendMug(ctx, userID, mediaID)
+	if err != nil {
+		return "", err
+	}
+	if caption == "" && len(buttons) == 0 {
+		return videoMessageID, nil
+	}
+	if err := c.SendText(ctx, userID, caption, buttons); err != nil {
+		return "", err
+	}
+	return videoMessageID, nil
+}
+
+func (c *Client) SendMug(ctx context.Context, userID, mediaID string) (string, error) {
 	payload := map[string]any{
 		"token":      mediaID,
 		"format":     "mug",
 		"quickVideo": true,
 	}
 	body := map[string]any{
-		"text": caption,
 		"attachments": []map[string]any{
 			{"type": "video", "payload": payload, "quickVideo": true},
 		},
-	}
-	if len(buttons) > 0 {
-		body["attachments"] = append(body["attachments"].([]map[string]any), inlineKeyboard(buttons)...)
 	}
 	var out struct {
 		Message Message `json:"message"`
