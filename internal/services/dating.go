@@ -727,10 +727,29 @@ func (s *DatingService) recordButtons(user models.User) [][]maxapi.Button {
 }
 
 func (s *DatingService) recordURL() string {
-	if s.maxAppURL != "" {
-		return s.maxAppURL
+	app := normalizeMaxAppLink(s.maxAppURL)
+	if app != "" {
+		return app
 	}
-	return "https://max.ru/id550411830268_1_bot"
+	return "id550411830268_1_bot"
+}
+
+func normalizeMaxAppLink(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	value = strings.TrimRight(value, "/")
+	if strings.HasPrefix(value, "https://max.ru/") {
+		return strings.TrimPrefix(value, "https://max.ru/")
+	}
+	if strings.HasPrefix(value, "http://max.ru/") {
+		return strings.TrimPrefix(value, "http://max.ru/")
+	}
+	if strings.Contains(value, "/") || strings.Contains(value, ".") {
+		return ""
+	}
+	return value
 }
 
 func mainMenuButtons() [][]maxapi.Button {
