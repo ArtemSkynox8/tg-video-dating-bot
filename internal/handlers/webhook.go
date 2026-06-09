@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 
@@ -37,13 +38,26 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	var err error
-	switch {
-	case update.Message != nil:
-		err = h.service.HandleMessage(ctx, *update.Message)
-	case update.Callback != nil:
-		err = h.service.HandleCallback(ctx, *update.Callback)
+	switch update.UpdateType {
+	case "message_created":
+		if update.Message != nil {
+			err = h.service.HandleMessage(ctx, normalizeMessage(*update.Message))
+		}
+	case "bot_started":
+		if update.User != nil {
+			err = h.service.HandleMessage(ctx, maxapi.MessageUpdate{
+				MessageID: fmt.Sprintf("bot-started-%d", update.Timestamp),
+				Chat:      maxapi.Chat{ID: fmt.Sprint(update.ChatID)},
+				From:      *update.User,
+				Text:      "/start",
+			})
+		}
+	case "message_callback":
+		if update.Callback != nil {
+			err = h.service.HandleCallback(ctx, normalizeCallback(*update.Callback))
+		}
 	default:
-		log.Printf("ignored update without supported payload: %s", update.UpdateID)
+		log.Printf("ignored max update type=%s id=%s", update.UpdateType, update.UpdateID)
 	}
 
 	if err != nil {
@@ -54,4 +68,53 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("ok"))
+}
+
+func normalizeMessage(message maxapi.Message) maxapi.MessageUpdate {
+	chatID := message.Recipient.ChatID
+	if chatID == "" {
+		chatID = message.Recipient.UserID
+	}
+	return maxapi.MessageUpdate{
+		MessageID: message.Body.MID,
+		Chat:      maxapi.Chat{ID: chatID},
+		From:      message.Sender,
+		Text:      message.Body.Text,
+		Media:     normalizeMedia(message.Body.Attachments),
+	}
+}
+
+func normalizeCallback(callback maxapi.CallbackEvent) maxapi.CallbackUpdate {
+	chatID := callback.Message.Recipient.ChatID
+	if chatID == "" {
+		chatID = callback.Message.Recipient.UserID
+	}
+	return maxapi.CallbackUpdate{
+		CallbackID: callback.CallbackID,
+		MessageID:  callback.Message.Body.MID,
+		Chat:       maxapi.Chat{ID: chatID},
+		From:       callback.User,
+		Payload:    callback.Payload,
+	}
+}
+
+func normalizeMedia(attachments []maxapi.Attachment) []maxapi.Media {
+	media := make([]maxapi.Media, 0, len(attachments))
+	for _, attachment := range attachments {
+		if attachment.Type != "video" && attachment.Type != "file" {
+			continue
+		}
+		id := ""
+		if token, ok := attachment.Payload["token"]; ok {
+			id = fmt.Sprint(token)
+		}
+		if id == "" {
+			continue
+		}
+		media = append(media, maxapi.Media{
+			ID:   id,
+			Type: attachment.Type,
+		})
+	}
+	return media
 }
