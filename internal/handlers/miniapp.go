@@ -122,9 +122,9 @@ func (h *MiniAppHandler) upload(w http.ResponseWriter, r *http.Request) {
 	}
 	var sendErr error
 	if uploadedToMax {
-		for attempt := 0; attempt < 4; attempt++ {
+		for attempt := 0; attempt < 6; attempt++ {
 			if attempt > 0 {
-				time.Sleep(time.Duration(attempt*2) * time.Second)
+				time.Sleep(5 * time.Second)
 			}
 			_, sendErr = h.max.SendMedia(context.Background(), user.PlatformChatID, platformMediaID, "Предпросмотр кружка", buttons)
 			if sendErr == nil {
@@ -219,6 +219,71 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
       line-height: 1.35;
     }
     .status { min-height: 22px; color: #83e2b7; }
+    .overlay {
+      position: fixed;
+      inset: 0;
+      display: none;
+      place-items: center;
+      padding: 24px;
+      background: rgba(7, 12, 18, .82);
+      backdrop-filter: blur(14px);
+      z-index: 10;
+    }
+    .overlay.open { display: grid; }
+    .modal {
+      width: min(100%, 360px);
+      padding: 24px;
+      border-radius: 18px;
+      background: #fff;
+      color: #17202a;
+      display: grid;
+      gap: 16px;
+      text-align: center;
+      box-shadow: 0 26px 90px rgba(0,0,0,.35);
+    }
+    .modal h2 {
+      margin: 0;
+      font-size: 24px;
+      letter-spacing: 0;
+    }
+    .modal p {
+      color: #5b6672;
+      max-width: none;
+      font-size: 15px;
+    }
+    .bar {
+      height: 12px;
+      border-radius: 999px;
+      overflow: hidden;
+      background: #e8edf3;
+    }
+    .bar span {
+      display: block;
+      width: 0%;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, #39c9d0, #7376ff);
+      transition: width .18s ease;
+    }
+    .percent {
+      font-size: 34px;
+      font-weight: 800;
+      letter-spacing: 0;
+    }
+    .return {
+      min-height: 54px;
+      border: 0;
+      border-radius: 14px;
+      background: #1683ff;
+      color: #fff;
+      font: inherit;
+      font-weight: 700;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      text-decoration: none;
+    }
+    .return.ready { display: flex; }
   </style>
 </head>
 <body>
@@ -230,6 +295,15 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
     <p>Нажмите и удерживайте кнопку, чтобы записать кружок</p>
     <p id="status" class="status"></p>
   </main>
+  <div id="overlay" class="overlay" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true">
+      <h2 id="modalTitle">Готовим вашу анкету</h2>
+      <p id="modalText">Загружаем кружок и отправляем предпросмотр в бот.</p>
+      <div class="bar"><span id="uploadBar"></span></div>
+      <div id="uploadPercent" class="percent">0%</div>
+      <a id="returnButton" class="return" href="{{.ReturnToBot}}">Вернуться в бота</a>
+    </div>
+  </div>
   <script>
     function resolveUserId() {
       const fallback = "{{.UserID}}";
@@ -246,6 +320,12 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
     const fallbackFile = document.getElementById("fallbackFile");
     const timer = document.getElementById("timer");
     const statusEl = document.getElementById("status");
+    const overlay = document.getElementById("overlay");
+    const uploadBar = document.getElementById("uploadBar");
+    const uploadPercent = document.getElementById("uploadPercent");
+    const modalTitle = document.getElementById("modalTitle");
+    const modalText = document.getElementById("modalText");
+    const returnButton = document.getElementById("returnButton");
     const maxDuration = 30;
     let stream, recorder, chunks = [], startedAt = 0, tick = 0, drawTick = 0, stopped = false, holding = false, starting = false;
 
@@ -256,6 +336,26 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
     function setProgress(seconds) {
       const clamped = Math.max(0, Math.min(maxDuration, seconds));
       previewRing.style.setProperty("--progress", String((clamped / maxDuration) * 100) + "%");
+    }
+    function setUploadProgress(value) {
+      const clamped = Math.max(0, Math.min(100, Math.round(value)));
+      uploadBar.style.width = clamped + "%";
+      uploadPercent.textContent = clamped + "%";
+    }
+    function showPreparing() {
+      overlay.classList.add("open");
+      overlay.setAttribute("aria-hidden", "false");
+      modalTitle.textContent = "Готовим вашу анкету";
+      modalText.textContent = "Загружаем кружок и отправляем предпросмотр в бот.";
+      returnButton.classList.remove("ready");
+      setUploadProgress(0);
+    }
+    function showReady() {
+      modalTitle.textContent = "Анкета готова";
+      modalText.textContent = "Кружок загружен. Вернитесь в бот и выберите, сохранить его или перезаписать.";
+      setUploadProgress(100);
+      returnButton.href = returnToBotURL || "https://max.ru/id550411830268_1_bot";
+      returnButton.classList.add("ready");
     }
     async function init() {
       if (window.WebApp && WebApp.ready) WebApp.ready();
@@ -386,39 +486,73 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
     }
     async function uploadBlob(blob, duration, filename) {
       setStatus("Загружаю видео...");
+      showPreparing();
       const form = new FormData();
       form.append("user_id", userId);
       form.append("duration", String(duration));
       form.append("video", blob, filename);
-      const res = await fetch("/mini/upload", { method: "POST", body: form });
-      if (!res.ok) {
+      try {
+        await sendUpload(form);
+      } catch (e) {
+        console.warn("upload failed", e);
         setStatus("Не удалось загрузить. Запишите заново.");
+        modalTitle.textContent = "Не удалось загрузить";
+        modalText.textContent = "Закройте это окно и попробуйте записать кружок заново.";
+        returnButton.href = returnToBotURL || "https://max.ru/id550411830268_1_bot";
+        returnButton.classList.add("ready");
         return;
       }
       setStatus("Кружок сохранен.");
-      setTimeout(() => {
-        returnToBot();
-      }, 500);
+      showReady();
     }
-    function returnToBot() {
-      if (history.length > 1) {
-        history.back();
+    function sendUpload(form) {
+      return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        let serverWait = 0;
+        let serverTimer = 0;
+        xhr.open("POST", "/mini/upload", true);
+        xhr.upload.onprogress = e => {
+          if (!e.lengthComputable) return;
+          setUploadProgress(Math.min(90, (e.loaded / e.total) * 90));
+        };
+        xhr.upload.onload = () => {
+          modalText.textContent = "Видео загружено. MAX обрабатывает предпросмотр.";
+          serverTimer = setInterval(() => {
+            serverWait = Math.min(98, serverWait + 1);
+            setUploadProgress(Math.max(90, serverWait));
+          }, 550);
+        };
+        xhr.onload = () => {
+          clearInterval(serverTimer);
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve();
+          } else {
+            reject(new Error("upload status " + xhr.status));
+          }
+        };
+        xhr.onerror = () => {
+          clearInterval(serverTimer);
+          reject(new Error("network error"));
+        };
+        xhr.send(form);
+      });
+    }
+    returnButton.addEventListener("click", e => {
+      e.preventDefault();
+      const target = returnButton.href || returnToBotURL || "https://max.ru/id550411830268_1_bot";
+      if (window.WebApp && WebApp.close) {
+        WebApp.close();
+        return;
       }
+      if (window.MAX && MAX.close) {
+        MAX.close();
+        return;
+      }
+      window.location.href = target;
       setTimeout(() => {
-        if (window.WebApp && WebApp.close) {
-          WebApp.close();
-          return;
-        }
-        if (window.MAX && MAX.close) {
-          MAX.close();
-          return;
-        }
         window.close();
-        setTimeout(() => {
-          window.location.href = returnToBotURL || "https://max.ru/id550411830268_1_bot";
-        }, 250);
-      }, 250);
-    }
+      }, 300);
+    });
     fallbackFile.addEventListener("change", async () => {
       holding = false;
       const file = fallbackFile.files && fallbackFile.files[0];
