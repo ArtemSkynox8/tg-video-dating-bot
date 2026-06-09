@@ -96,7 +96,7 @@ func (c *Client) sendMug(ctx context.Context, path, mediaID string) (string, err
 	}
 	body := map[string]any{
 		"attachments": []map[string]any{
-			{"type": "video", "payload": payload, "quickVideo": true},
+			{"type": "video", "payload": payload, "format": "mug", "quickVideo": true},
 		},
 	}
 	var out struct {
@@ -119,9 +119,15 @@ func (c *Client) UploadVideo(ctx context.Context, path string) (string, error) {
 	if upload.URL == "" || upload.Token == "" {
 		return "", fmt.Errorf("max upload url response missing url or token")
 	}
-	if err := uploadMultipart(ctx, c.http, upload.URL, path); err != nil {
+	uploaded, err := uploadMultipart(ctx, c.http, upload.URL, path)
+	if err != nil {
 		return "", err
 	}
+	if token := stringValue(uploaded["token"]); token != "" {
+		log.Printf("max upload video completed keys=%s token_source=upload_response", mapKeys(uploaded))
+		return token, nil
+	}
+	log.Printf("max upload video completed keys=%s token_source=upload_url", mapKeys(uploaded))
 	return upload.Token, nil
 }
 
@@ -181,10 +187,10 @@ func (c *Client) post(ctx context.Context, path string, in any, out any) error {
 	return json.NewDecoder(res.Body).Decode(out)
 }
 
-func uploadMultipart(ctx context.Context, client *http.Client, uploadURL, path string) error {
+func uploadMultipart(ctx context.Context, client *http.Client, uploadURL, path string) (map[string]any, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer file.Close()
 
@@ -192,30 +198,51 @@ func uploadMultipart(ctx context.Context, client *http.Client, uploadURL, path s
 	writer := multipart.NewWriter(&body)
 	part, err := writer.CreateFormFile("data", filepath.Base(path))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if _, err := io.Copy(part, file); err != nil {
-		return err
+		return nil, err
 	}
 	if err := writer.Close(); err != nil {
-		return err
+		return nil, err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, &body)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	res, err := client.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer res.Body.Close()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		detail, _ := io.ReadAll(io.LimitReader(res.Body, 2048))
-		return fmt.Errorf("max upload failed: %s: %s", res.Status, strings.TrimSpace(string(detail)))
+		return nil, fmt.Errorf("max upload failed: %s: %s", res.Status, strings.TrimSpace(string(detail)))
 	}
-	return nil
+	var out map[string]any
+	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func stringValue(value any) string {
+	switch v := value.(type) {
+	case string:
+		return v
+	default:
+		return ""
+	}
+}
+
+func mapKeys(values map[string]any) string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	return strings.Join(keys, ",")
 }
 
 func (c *Client) delete(ctx context.Context, path string) error {
