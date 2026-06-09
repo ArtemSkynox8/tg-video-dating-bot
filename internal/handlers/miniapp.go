@@ -212,7 +212,7 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
     const button = document.getElementById("record");
     const timer = document.getElementById("timer");
     const statusEl = document.getElementById("status");
-    let stream, recorder, chunks = [], startedAt = 0, tick, stopped = false;
+    let stream, recorder, chunks = [], startedAt = 0, tick, stopped = false, holding = false, starting = false;
 
     function setStatus(text) { statusEl.textContent = text; }
     function format(seconds) {
@@ -225,15 +225,27 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
         button.disabled = true;
         return;
       }
+      setStatus("Нажмите красную кнопку, чтобы разрешить камеру.");
+    }
+    async function ensureStream() {
+      if (stream) return true;
       try {
         stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: true });
         preview.srcObject = stream;
+        setStatus("");
+        return true;
       } catch (e) {
-        setStatus("Разрешите доступ к камере и микрофону.");
+        setStatus("MAX не дал доступ к камере. Проверьте разрешения приложения MAX для камеры и микрофона.");
+        return false;
       }
     }
-    function start() {
-      if (!stream || recorder?.state === "recording") return;
+    async function start() {
+      holding = true;
+      if (starting || recorder?.state === "recording") return;
+      starting = true;
+      const ok = await ensureStream();
+      starting = false;
+      if (!ok || !holding) return;
       chunks = [];
       stopped = false;
       recorder = new MediaRecorder(stream, { mimeType: "video/webm" });
@@ -250,6 +262,7 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
       }, 200);
     }
     function stop() {
+      holding = false;
       if (!recorder || recorder.state !== "recording" || stopped) return;
       stopped = true;
       clearInterval(tick);

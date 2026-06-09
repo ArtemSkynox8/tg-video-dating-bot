@@ -201,7 +201,7 @@ func (s *DatingService) SendCommands(ctx context.Context, user models.User) erro
 }
 
 func (s *DatingService) SendRecordPrompt(ctx context.Context, user models.User, text string) error {
-	return s.max.SendText(ctx, user.PlatformChatID, text, s.recordButtons(user))
+	return s.max.SendText(ctx, user.PlatformChatID, text+"\n\nОткройте мини-приложение кнопкой MAX в чате и запишите кружок.", nil)
 }
 
 func (s *DatingService) ResetMe(ctx context.Context, user models.User) error {
@@ -227,7 +227,7 @@ func (s *DatingService) SaveRecordedVideo(ctx context.Context, user models.User,
 	}
 	if err := s.repo.ActivateVideo(ctx, user.ID, videoID); err != nil {
 		if err == repositories.ErrNotFound {
-			return s.max.SendText(ctx, user.PlatformChatID, "Не нашел этот кружок. Запишите заново.", s.recordButtons(user))
+			return s.SendRecordPrompt(ctx, user, "Не нашел этот кружок. Запишите заново.")
 		}
 		return err
 	}
