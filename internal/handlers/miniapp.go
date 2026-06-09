@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -98,23 +99,44 @@ func (h *MiniAppHandler) upload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	publicURL := strings.TrimRight(h.cfg.PublicBaseURL, "/") + "/media/" + name
-	videoID, err := h.repo.SavePendingVideo(r.Context(), user.ID, publicURL, publicURL, duration)
+	platformMediaID := publicURL
+	uploadedToMax := false
+	if token, err := h.max.UploadVideo(r.Context(), path); err != nil {
+		log.Printf("upload video to max user=%s path=%s: %v", user.PlatformUserID, path, err)
+	} else {
+		platformMediaID = token
+		uploadedToMax = true
+	}
+	videoID, err := h.repo.SavePendingVideo(r.Context(), user.ID, platformMediaID, publicURL, duration)
 	if err != nil {
 		http.Error(w, "database error", http.StatusInternalServerError)
 		return
 	}
-	if _, err := h.max.SendMedia(context.Background(), user.PlatformChatID, publicURL, "Предпросмотр кружка", [][]maxapi.Button{
+
+	buttons := [][]maxapi.Button{
 		{
 			{Text: "✅ Сохранить", Payload: fmt.Sprintf("save_video:%d", videoID)},
 			{Text: "🎥 Перезаписать", Payload: "rewrite_video"},
 		},
-	}); err != nil {
-		_ = h.max.SendText(context.Background(), user.PlatformChatID, "Кружок загружен. Нажмите сохранить или перезапишите.", [][]maxapi.Button{
-			{
-				{Text: "✅ Сохранить", Payload: fmt.Sprintf("save_video:%d", videoID)},
-				{Text: "🎥 Перезаписать", Payload: "rewrite_video"},
-			},
-		})
+	}
+	var sendErr error
+	if uploadedToMax {
+		for attempt := 0; attempt < 4; attempt++ {
+			if attempt > 0 {
+				time.Sleep(time.Duration(attempt*2) * time.Second)
+			}
+			_, sendErr = h.max.SendMedia(context.Background(), user.PlatformChatID, platformMediaID, "Предпросмотр кружка", buttons)
+			if sendErr == nil {
+				break
+			}
+			log.Printf("send max video preview attempt=%d user=%s token=%s: %v", attempt+1, user.PlatformUserID, platformMediaID, sendErr)
+		}
+	} else {
+		sendErr = fmt.Errorf("video was not uploaded to max")
+	}
+	if sendErr != nil {
+		log.Printf("send video preview failed user=%s video_id=%d: %v", user.PlatformUserID, videoID, sendErr)
+		_ = h.max.SendText(context.Background(), user.PlatformChatID, "Кружок загружен. MAX пока не прислал видео в чат, но файл сохранен на сервере:\n"+publicURL+"\n\nНажмите сохранить или перезапишите.", buttons)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -150,17 +172,22 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
       gap: 22px;
     }
     .preview {
+      --progress: 0%;
       width: min(78vw, 320px);
       aspect-ratio: 1;
+      padding: 7px;
       border-radius: 50%;
       overflow: hidden;
-      background: #202b36;
-      border: 5px solid rgba(255,255,255,.16);
+      background:
+        conic-gradient(#51d4ff var(--progress), rgba(255,255,255,.16) 0),
+        #202b36;
       box-shadow: 0 22px 80px rgba(0,0,0,.35);
     }
     video {
       width: 100%;
       height: 100%;
+      border-radius: 50%;
+      background: #202b36;
       object-fit: cover;
       transform: scaleX(-1);
     }
@@ -212,6 +239,7 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
     }
     const userId = resolveUserId();
     const preview = document.getElementById("preview");
+    const previewRing = document.querySelector(".preview");
     const button = document.getElementById("record");
     const fallbackFile = document.getElementById("fallbackFile");
     const timer = document.getElementById("timer");
@@ -221,6 +249,10 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
     function setStatus(text) { statusEl.textContent = text; }
     function format(seconds) {
       return String(Math.floor(seconds / 60)).padStart(2, "0") + ":" + String(seconds % 60).padStart(2, "0");
+    }
+    function setProgress(seconds) {
+      const clamped = Math.max(0, Math.min(60, seconds));
+      previewRing.style.setProperty("--progress", String((clamped / 60) * 100) + "%");
     }
     async function init() {
       if (window.WebApp && WebApp.ready) WebApp.ready();
@@ -279,9 +311,11 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
       recorder.start();
       button.classList.add("recording");
       setStatus("");
+      setProgress(0);
       tick = setInterval(() => {
         const seconds = Math.floor((Date.now() - startedAt) / 1000);
         timer.textContent = format(seconds);
+        setProgress(seconds);
         if (seconds >= 60) stop();
       }, 200);
     }
@@ -291,12 +325,14 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
       stopped = true;
       clearInterval(tick);
       button.classList.remove("recording");
+      setProgress(Math.min(60, Math.floor((Date.now() - startedAt) / 1000)));
       recorder.stop();
     }
     async function upload() {
       const duration = Math.round((Date.now() - startedAt) / 1000);
       if (duration < 3) {
         timer.textContent = "00:00";
+        setProgress(0);
         setStatus("Запись слишком короткая. Запишите минимум 3 секунды.");
         return;
       }
@@ -315,9 +351,18 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
       }
       setStatus("Кружок сохранен.");
       setTimeout(() => {
-        if (window.WebApp && WebApp.close) WebApp.close();
-        else if (window.MAX && MAX.close) MAX.close();
-        else window.close();
+        if (window.WebApp && WebApp.close) {
+          WebApp.close();
+          return;
+        }
+        if (window.MAX && MAX.close) {
+          MAX.close();
+          return;
+        }
+        window.close();
+        setTimeout(() => {
+          if (history.length > 1) history.back();
+        }, 150);
       }, 650);
     }
     fallbackFile.addEventListener("change", async () => {
