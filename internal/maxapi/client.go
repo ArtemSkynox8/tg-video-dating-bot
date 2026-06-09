@@ -40,11 +40,15 @@ func (c *Client) SendText(ctx context.Context, userID, text string, buttons [][]
 }
 
 func (c *Client) SendMedia(ctx context.Context, userID, mediaID, caption string, buttons [][]Button) (string, error) {
-	payload := map[string]any{"token": mediaID}
+	payload := map[string]any{
+		"token":      mediaID,
+		"format":     "mug",
+		"quickVideo": true,
+	}
 	body := map[string]any{
 		"text": caption,
 		"attachments": []map[string]any{
-			{"type": "video", "payload": payload},
+			{"type": "video", "payload": payload, "quickVideo": true},
 		},
 	}
 	if len(buttons) > 0 {
