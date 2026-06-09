@@ -221,9 +221,18 @@ func uploadMultipart(ctx context.Context, client *http.Client, uploadURL, path s
 		detail, _ := io.ReadAll(io.LimitReader(res.Body, 2048))
 		return nil, fmt.Errorf("max upload failed: %s: %s", res.Status, strings.TrimSpace(string(detail)))
 	}
-	var out map[string]any
-	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+	detail, err := io.ReadAll(io.LimitReader(res.Body, 4096))
+	if err != nil {
 		return nil, err
+	}
+	trimmed := strings.TrimSpace(string(detail))
+	if trimmed == "" {
+		return map[string]any{}, nil
+	}
+	var out map[string]any
+	if err := json.Unmarshal([]byte(trimmed), &out); err != nil {
+		log.Printf("max upload response is not json content_type=%q prefix=%q", res.Header.Get("Content-Type"), responsePrefix(trimmed))
+		return map[string]any{}, nil
 	}
 	return out, nil
 }
@@ -243,6 +252,13 @@ func mapKeys(values map[string]any) string {
 		keys = append(keys, key)
 	}
 	return strings.Join(keys, ",")
+}
+
+func responsePrefix(value string) string {
+	if len(value) > 120 {
+		return value[:120]
+	}
+	return value
 }
 
 func (c *Client) delete(ctx context.Context, path string) error {
