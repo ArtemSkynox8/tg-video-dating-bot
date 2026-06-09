@@ -50,7 +50,7 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if update.User != nil {
 			err = h.service.HandleMessage(ctx, maxapi.MessageUpdate{
 				MessageID: fmt.Sprintf("bot-started-%d", update.Timestamp),
-				Chat:      maxapi.Chat{ID: fmt.Sprint(update.ChatID)},
+				Chat:      maxapi.Chat{ID: update.User.ID},
 				From:      *update.User,
 				Text:      "/start",
 			})
@@ -78,13 +78,16 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func normalizeMessage(update maxapi.Update) maxapi.MessageUpdate {
 	message := *update.Message
-	chatID := message.Recipient.ChatID
-	if chatID == "" {
-		chatID = message.Recipient.UserID
-	}
 	from := message.Sender
 	if update.User != nil && update.User.ID != "" {
 		from = *update.User
+	}
+	chatID := from.ID
+	if chatID == "" {
+		chatID = message.Recipient.ChatID
+	}
+	if chatID == "" {
+		chatID = message.Recipient.UserID
 	}
 	return maxapi.MessageUpdate{
 		MessageID: message.Body.MID,
@@ -97,13 +100,16 @@ func normalizeMessage(update maxapi.Update) maxapi.MessageUpdate {
 
 func normalizeCallback(update maxapi.Update) maxapi.CallbackUpdate {
 	callback := *update.Callback
-	chatID := callback.Message.Recipient.ChatID
-	if chatID == "" {
-		chatID = callback.Message.Recipient.UserID
-	}
 	from := callback.User
 	if update.User != nil && update.User.ID != "" {
 		from = *update.User
+	}
+	chatID := from.ID
+	if chatID == "" {
+		chatID = callback.Message.Recipient.ChatID
+	}
+	if chatID == "" {
+		chatID = callback.Message.Recipient.UserID
 	}
 	return maxapi.CallbackUpdate{
 		CallbackID: callback.CallbackID,
