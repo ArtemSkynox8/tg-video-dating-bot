@@ -69,6 +69,7 @@ type Button struct {
 	Text    string `json:"text"`
 	Payload string `json:"payload,omitempty"`
 	URL     string `json:"url,omitempty"`
+	OpenApp bool  `json:"open_app,omitempty"`
 }
 
 type Message struct {
