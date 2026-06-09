@@ -3,8 +3,10 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/ArtemSkynox8/tg-video-dating-bot/internal/config"
 	"github.com/ArtemSkynox8/tg-video-dating-bot/internal/maxapi"
@@ -30,8 +32,13 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	body, readErr := io.ReadAll(r.Body)
+	if readErr != nil {
+		http.Error(w, "bad update", http.StatusBadRequest)
+		return
+	}
 	var update maxapi.Update
-	if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
+	if err := json.Unmarshal(body, &update); err != nil {
 		http.Error(w, "bad update", http.StatusBadRequest)
 		return
 	}
@@ -42,8 +49,11 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "message_created":
 		if update.Message != nil {
 			msg := normalizeMessage(update)
-			log.Printf("max update message_created user=%s chat=%s sender=%s recipient_chat=%s recipient_user=%s text=%q",
-				msg.From.ID, msg.Chat.ID, update.Message.Sender.ID, update.Message.Recipient.ChatID, update.Message.Recipient.UserID, msg.Text)
+			log.Printf("max update message_created user=%s chat=%s sender=%s recipient_chat=%s recipient_user=%s attachments=%d media=%d text=%q",
+				msg.From.ID, msg.Chat.ID, update.Message.Sender.ID, update.Message.Recipient.ChatID, update.Message.Recipient.UserID, len(update.Message.Body.Attachments), len(msg.Media), msg.Text)
+			if msg.Text == "" && len(update.Message.Body.Attachments) == 0 {
+				log.Printf("max empty message raw=%s", limitLog(string(body), 2500))
+			}
 			err = h.service.HandleMessage(ctx, msg)
 		}
 	case "bot_started":
@@ -125,23 +135,69 @@ func normalizeCallback(update maxapi.Update) maxapi.CallbackUpdate {
 func normalizeMedia(attachments []maxapi.Attachment) []maxapi.Media {
 	media := make([]maxapi.Media, 0, len(attachments))
 	for _, attachment := range attachments {
+		log.Printf("max attachment type=%s payload_keys=%s", attachment.Type, payloadKeys(attachment.Payload))
 		if attachment.Type != "video" && attachment.Type != "file" {
 			continue
 		}
-		id := ""
-		for _, key := range []string{"token", "file_id", "id", "video_token"} {
-			if token, ok := attachment.Payload[key]; ok {
-				id = fmt.Sprint(token)
-				break
-			}
-		}
+		id := findPayloadValue(attachment.Payload, []string{"token", "file_id", "video_token", "id"})
 		if id == "" {
 			continue
 		}
 		media = append(media, maxapi.Media{
-			ID:   id,
-			Type: attachment.Type,
+			ID:       id,
+			Type:     attachment.Type,
+			URL:      findPayloadValue(attachment.Payload, []string{"url", "download_url", "downloadUrl"}),
+			Duration: parsePayloadInt(attachment.Payload, []string{"duration", "duration_ms", "durationMs"}),
 		})
 	}
 	return media
+}
+
+func findPayloadValue(value any, keys []string) string {
+	switch item := value.(type) {
+	case map[string]any:
+		for _, key := range keys {
+			if raw, ok := item[key]; ok && fmt.Sprint(raw) != "" {
+				return fmt.Sprint(raw)
+			}
+		}
+		for _, raw := range item {
+			if found := findPayloadValue(raw, keys); found != "" {
+				return found
+			}
+		}
+	case []any:
+		for _, raw := range item {
+			if found := findPayloadValue(raw, keys); found != "" {
+				return found
+			}
+		}
+	}
+	return ""
+}
+
+func parsePayloadInt(value any, keys []string) int {
+	text := findPayloadValue(value, keys)
+	var out int
+	_, _ = fmt.Sscan(text, &out)
+	if strings.Contains(strings.ToLower(strings.Join(keys, ",")), "ms") && out > 1000 {
+		return out / 1000
+	}
+	return out
+}
+
+func payloadKeys(payload map[string]any) string {
+	keys := make([]string, 0, len(payload))
+	for key := range payload {
+		keys = append(keys, key)
+	}
+	return strings.Join(keys, ",")
+}
+
+func limitLog(value string, max int) string {
+	value = strings.ReplaceAll(value, "\n", "")
+	if len(value) <= max {
+		return value
+	}
+	return value[:max]
 }

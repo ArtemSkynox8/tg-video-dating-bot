@@ -316,14 +316,15 @@ func (s *DatingService) SavePreferredGenderStep(ctx context.Context, user models
 }
 
 func (s *DatingService) HandleMedia(ctx context.Context, user models.User, media maxapi.Media) error {
-	if user.FlowState != models.StateAwaitingVideo && user.FlowState != models.StateAwaitingRewriteVideo {
+	expectingVideo := user.FlowState == models.StateAwaitingVideo || user.FlowState == models.StateAwaitingRewriteVideo
+	if !expectingVideo && !profileComplete(user) {
 		return s.max.SendText(ctx, user.PlatformChatID, "Чтобы заменить видео, нажмите 🎥 Перезаписать видео.", mainMenuButtons())
 	}
 	if media.Type != "video" && media.Type != "round_video" && media.Type != "file" {
 		return s.max.SendText(ctx, user.PlatformChatID, "Принимается только поддерживаемое короткое видео MAX.", nil)
 	}
-	if media.Duration > 60 {
-		return s.max.SendText(ctx, user.PlatformChatID, "Видео должно быть не длиннее 60 секунд.", nil)
+	if media.Duration > 30 {
+		return s.max.SendText(ctx, user.PlatformChatID, "Видео должно быть не длиннее 30 секунд.", nil)
 	}
 	if err := s.repo.SaveVideo(ctx, user.ID, media.ID, media.URL, media.Duration); err != nil {
 		return err
@@ -331,7 +332,7 @@ func (s *DatingService) HandleMedia(ctx context.Context, user models.User, media
 	if err := s.repo.ClearFlowState(ctx, user.ID); err != nil {
 		return err
 	}
-	if user.FlowState == models.StateAwaitingRewriteVideo {
+	if user.FlowState == models.StateAwaitingRewriteVideo || !expectingVideo {
 		return s.max.SendText(ctx, user.PlatformChatID, "Видео обновлено.", mainMenuButtons())
 	}
 	return s.max.SendText(ctx, user.PlatformChatID, "✅ Анкета создана. Теперь вы можете смотреть видео других пользователей.", [][]maxapi.Button{
