@@ -198,7 +198,7 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
     <div class="preview"><video id="preview" autoplay muted playsinline></video></div>
     <div id="timer" class="timer">00:00</div>
     <button id="record" class="record" aria-label="Записать"></button>
-    <input id="fallbackFile" type="file" accept="video/*" capture="user" hidden>
+    <input id="fallbackFile" type="file" accept="video/*,video/mp4,video/webm" capture="user" hidden>
     <p>Нажмите и удерживайте кнопку, чтобы записать кружок</p>
     <p id="status" class="status"></p>
   </main>
@@ -231,15 +231,30 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
       }
       setStatus("Нажмите красную кнопку, чтобы разрешить камеру.");
     }
+    function getUserMediaCompat(constraints) {
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        return navigator.mediaDevices.getUserMedia(constraints);
+      }
+      const legacy = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia;
+      if (!legacy) return Promise.reject(new Error("getUserMedia is not supported"));
+      return new Promise((resolve, reject) => legacy.call(navigator, constraints, resolve, reject));
+    }
     async function ensureStream() {
       if (stream) return true;
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: true });
+        stream = await getUserMediaCompat({ video: { facingMode: "user" }, audio: false });
+        try {
+          const audioStream = await getUserMediaCompat({ audio: true, video: false });
+          audioStream.getAudioTracks().forEach(track => stream.addTrack(track));
+        } catch (audioError) {
+          console.warn("audio permission failed", audioError);
+        }
         preview.srcObject = stream;
         setStatus("");
         return true;
       } catch (e) {
-        setStatus("Откроется нативная запись видео. Запишите кружок и подтвердите выбор.");
+        console.warn("camera permission failed", e);
+        setStatus("MAX не открыл встроенную камеру. Откроется системная запись видео.");
         fallbackOpened = true;
         fallbackFile.click();
         return false;
@@ -254,7 +269,10 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
       if (!ok || !holding) return;
       chunks = [];
       stopped = false;
-      recorder = new MediaRecorder(stream, { mimeType: "video/webm" });
+      const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp8,opus")
+        ? "video/webm;codecs=vp8,opus"
+        : (MediaRecorder.isTypeSupported("video/webm") ? "video/webm" : "");
+      recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
       recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
       recorder.onstop = upload;
       startedAt = Date.now();
