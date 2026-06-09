@@ -46,6 +46,9 @@ func (u *PlatformUser) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	u.ID = valueToString(raw["user_id"])
+	if u.ID == "" {
+		u.ID = valueToString(raw["id"])
+	}
 	u.Username = valueToString(raw["username"])
 	u.ProfileLink = valueToString(raw["profile_link"])
 	u.Name = valueToString(raw["name"])

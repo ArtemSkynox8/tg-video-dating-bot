@@ -41,7 +41,10 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch update.UpdateType {
 	case "message_created":
 		if update.Message != nil {
-			err = h.service.HandleMessage(ctx, normalizeMessage(*update.Message))
+			msg := normalizeMessage(update)
+			log.Printf("max update message_created user=%s chat=%s sender=%s recipient_chat=%s recipient_user=%s text=%q",
+				msg.From.ID, msg.Chat.ID, update.Message.Sender.ID, update.Message.Recipient.ChatID, update.Message.Recipient.UserID, msg.Text)
+			err = h.service.HandleMessage(ctx, msg)
 		}
 	case "bot_started":
 		if update.User != nil {
@@ -54,7 +57,10 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	case "message_callback":
 		if update.Callback != nil {
-			err = h.service.HandleCallback(ctx, normalizeCallback(*update.Callback))
+			cb := normalizeCallback(update)
+			log.Printf("max update message_callback user=%s chat=%s payload=%q callback_user=%s recipient_chat=%s recipient_user=%s",
+				cb.From.ID, cb.Chat.ID, cb.Payload, update.Callback.User.ID, update.Callback.Message.Recipient.ChatID, update.Callback.Message.Recipient.UserID)
+			err = h.service.HandleCallback(ctx, cb)
 		}
 	default:
 		log.Printf("ignored max update type=%s id=%s", update.UpdateType, update.UpdateID)
@@ -70,30 +76,40 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte("ok"))
 }
 
-func normalizeMessage(message maxapi.Message) maxapi.MessageUpdate {
+func normalizeMessage(update maxapi.Update) maxapi.MessageUpdate {
+	message := *update.Message
 	chatID := message.Recipient.ChatID
 	if chatID == "" {
 		chatID = message.Recipient.UserID
 	}
+	from := message.Sender
+	if update.User != nil && update.User.ID != "" {
+		from = *update.User
+	}
 	return maxapi.MessageUpdate{
 		MessageID: message.Body.MID,
 		Chat:      maxapi.Chat{ID: chatID},
-		From:      message.Sender,
+		From:      from,
 		Text:      message.Body.Text,
 		Media:     normalizeMedia(message.Body.Attachments),
 	}
 }
 
-func normalizeCallback(callback maxapi.CallbackEvent) maxapi.CallbackUpdate {
+func normalizeCallback(update maxapi.Update) maxapi.CallbackUpdate {
+	callback := *update.Callback
 	chatID := callback.Message.Recipient.ChatID
 	if chatID == "" {
 		chatID = callback.Message.Recipient.UserID
+	}
+	from := callback.User
+	if update.User != nil && update.User.ID != "" {
+		from = *update.User
 	}
 	return maxapi.CallbackUpdate{
 		CallbackID: callback.CallbackID,
 		MessageID:  callback.Message.Body.MID,
 		Chat:       maxapi.Chat{ID: chatID},
-		From:       callback.User,
+		From:       from,
 		Payload:    callback.Payload,
 	}
 }
