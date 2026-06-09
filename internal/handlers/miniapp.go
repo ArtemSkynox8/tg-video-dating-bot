@@ -40,7 +40,8 @@ func (h *MiniAppHandler) recordPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Permissions-Policy", "camera=(self), microphone=(self)")
 	w.Header().Set("Feature-Policy", "camera 'self'; microphone 'self'")
 	_ = miniRecordTemplate.Execute(w, map[string]string{
-		"UserID": platformUserID,
+		"UserID":       platformUserID,
+		"ReturnToBot":  h.cfg.ReturnToBotURL,
 	})
 }
 
@@ -238,6 +239,7 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
       return fallback;
     }
     const userId = resolveUserId();
+    const returnToBotURL = "{{.ReturnToBot}}";
     const preview = document.getElementById("preview");
     const previewRing = document.querySelector(".preview");
     const button = document.getElementById("record");
@@ -413,7 +415,7 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
         }
         window.close();
         setTimeout(() => {
-          window.location.href = "max://";
+          window.location.href = returnToBotURL || "https://max.ru/id550411830268_1_bot";
         }, 250);
       }, 250);
     }
