@@ -64,13 +64,21 @@ func (c *Client) SendMug(ctx context.Context, userID, mediaID string) (string, e
 }
 
 func (c *Client) SendMugToDialogOrUser(ctx context.Context, dialogID, userID, mediaID string) (string, error) {
+	if userID != "" {
+		messageID, err := c.sendMug(ctx, "/messages?chat_id="+url.QueryEscape(userID), mediaID)
+		if err == nil {
+			log.Printf("send mug only event_chat=%s token=%s", userID, mediaID)
+			return messageID, nil
+		}
+		log.Printf("send mug by event chat failed chat=%s token=%s: %v", userID, mediaID, err)
+	}
 	if dialogID != "" {
 		messageID, err := c.sendMug(ctx, "/messages?chat_id="+url.QueryEscape(dialogID), mediaID)
 		if err == nil {
-			log.Printf("send mug only chat=%s user=%s token=%s", dialogID, userID, mediaID)
+			log.Printf("send mug only recipient_chat=%s user=%s token=%s", dialogID, userID, mediaID)
 			return messageID, nil
 		}
-		log.Printf("send mug by chat failed chat=%s user=%s token=%s: %v", dialogID, userID, mediaID, err)
+		log.Printf("send mug by recipient chat failed chat=%s user=%s token=%s: %v", dialogID, userID, mediaID, err)
 	}
 	messageID, err := c.sendMug(ctx, "/messages?user_id="+url.QueryEscape(userID), mediaID)
 	if err != nil {

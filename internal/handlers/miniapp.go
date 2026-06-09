@@ -103,7 +103,7 @@ func (h *MiniAppHandler) upload(w http.ResponseWriter, r *http.Request) {
 
 	uploadPath := path
 	uploadName := name
-	if convertedPath, err := convertVideoForMax(r.Context(), path); err != nil {
+	if convertedPath, err := convertVideoForMax(r.Context(), path, duration); err != nil {
 		log.Printf("convert video for max user=%s path=%s: %v", user.PlatformUserID, path, err)
 	} else {
 		uploadPath = convertedPath
@@ -155,24 +155,35 @@ func (h *MiniAppHandler) upload(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(`{"ok":true}`))
 }
 
-func convertVideoForMax(ctx context.Context, inputPath string) (string, error) {
+func convertVideoForMax(ctx context.Context, inputPath string, duration int) (string, error) {
 	ext := filepath.Ext(inputPath)
 	outputPath := strings.TrimSuffix(inputPath, ext) + "-max.mp4"
 	convertCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
+	limit := duration
+	if limit <= 0 || limit > 30 {
+		limit = 30
+	}
 	cmd := exec.CommandContext(convertCtx, "ffmpeg",
 		"-y",
+		"-fflags", "+genpts",
 		"-i", inputPath,
-		"-t", "30",
-		"-vf", `crop=min(iw\,ih):min(iw\,ih),scale=480:480,format=yuv420p`,
+		"-map", "0:v:0",
+		"-map", "0:a?",
+		"-t", strconv.Itoa(limit),
+		"-vf", `fps=30,crop=min(iw\,ih):min(iw\,ih),scale=480:480,setsar=1,setpts=N/(30*TB),format=yuv420p`,
+		"-af", "aresample=async=1:first_pts=0",
 		"-c:v", "libx264",
 		"-profile:v", "baseline",
 		"-level", "3.0",
 		"-crf", "22",
 		"-preset", "veryfast",
 		"-bf", "0",
+		"-r", "30",
 		"-c:a", "aac",
 		"-b:a", "128k",
+		"-shortest",
+		"-avoid_negative_ts", "make_zero",
 		"-movflags", "+faststart",
 		outputPath,
 	)
