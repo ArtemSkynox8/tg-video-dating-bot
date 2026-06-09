@@ -7,7 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"syscall"
 	"time"
 
@@ -60,23 +60,29 @@ func main() {
 }
 
 type dynamicWebhook struct {
-	handler atomic.Value
+	mu      sync.RWMutex
+	handler http.Handler
 }
 
 func newDynamicWebhook() *dynamicWebhook {
-	d := &dynamicWebhook{}
-	d.handler.Store(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, "bot is starting", http.StatusServiceUnavailable)
-	}))
-	return d
+	return &dynamicWebhook{
+		handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "bot is starting", http.StatusServiceUnavailable)
+		}),
+	}
 }
 
 func (d *dynamicWebhook) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	d.handler.Load().(http.Handler).ServeHTTP(w, r)
+	d.mu.RLock()
+	handler := d.handler
+	d.mu.RUnlock()
+	handler.ServeHTTP(w, r)
 }
 
 func (d *dynamicWebhook) Set(handler http.Handler) {
-	d.handler.Store(handler)
+	d.mu.Lock()
+	d.handler = handler
+	d.mu.Unlock()
 }
 
 func initializeBot(ctx context.Context, cfg config.Config, webhook *dynamicWebhook) {
