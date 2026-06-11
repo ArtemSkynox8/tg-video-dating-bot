@@ -686,10 +686,10 @@ func (s *DatingService) SendAdminDeepLinkTest(ctx context.Context, admin models.
 	text := "Тест deep link для MAX user_id: " + platformUserID + "\n\n" +
 		"Нажмите кнопки на телефоне и проверьте, какая откроет профиль или личный чат."
 	return s.max.SendText(ctx, admin.PlatformChatID, text, [][]maxapi.Button{
-		{{Text: "max://user?id", URL: "max://user?id=" + url.QueryEscape(platformUserID)}},
-		{{Text: "max://chat?user_id", URL: "max://chat?user_id=" + url.QueryEscape(platformUserID)}},
 		{{Text: "https user?id", URL: "https://max.ru/user?id=" + url.QueryEscape(platformUserID)}},
 		{{Text: "https chat?user_id", URL: "https://max.ru/chat?user_id=" + url.QueryEscape(platformUserID)}},
+		{{Text: "https /u/user_id", URL: "https://max.ru/u/" + url.PathEscape(platformUserID)}},
+		{{Text: "https /id/user_id", URL: "https://max.ru/id" + url.PathEscape(platformUserID)}},
 		{{Text: "share fallback", URL: "https://max.ru/:share?text=" + shareText}},
 	})
 }
