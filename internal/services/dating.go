@@ -303,7 +303,15 @@ func (s *DatingService) SendRecordPrompt(ctx context.Context, user models.User, 
 }
 
 func (s *DatingService) SendProfileShareInstructions(ctx context.Context, user models.User) error {
-	text := "Чтобы другие пользователи могли написать вам после взаимного лайка, отправьте боту ссылку на свой профиль MAX.\n\n" +
+	return s.sendProfileShareInstructions(ctx, user, "Чтобы другие пользователи могли написать вам после взаимного лайка, отправьте боту ссылку на свой профиль MAX.")
+}
+
+func (s *DatingService) SendBrowseContactInstructions(ctx context.Context, user models.User) error {
+	return s.sendProfileShareInstructions(ctx, user, "Для просмотра кружков поделитесь своим контактом MAX.")
+}
+
+func (s *DatingService) sendProfileShareInstructions(ctx context.Context, user models.User, intro string) error {
+	text := intro + "\n\n" +
 		"Как сделать:\n" +
 		"1. Откройте свой профиль MAX.\n" +
 		"2. Нажмите «Поделиться».\n" +
@@ -532,7 +540,7 @@ func (s *DatingService) HandleMedia(ctx context.Context, user models.User, media
 		if err := s.repo.SetFlowState(ctx, user.ID, models.StateAwaitingProfileLink); err != nil {
 			return err
 		}
-		return s.SendProfileShareInstructions(ctx, user)
+		return s.SendBrowseContactInstructions(ctx, user)
 	}
 	return s.max.SendText(ctx, user.PlatformChatID, "✅ Анкета создана. Теперь вы можете смотреть видео других пользователей.", [][]maxapi.Button{
 		{{Text: "▶️ Начать просмотр", Payload: "browse"}},
@@ -562,7 +570,7 @@ func (s *DatingService) SendNextCandidate(ctx context.Context, user models.User)
 		if err := s.repo.SetFlowState(ctx, user.ID, models.StateAwaitingProfileLink); err != nil {
 			return err
 		}
-		return s.SendProfileShareInstructions(ctx, user)
+		return s.SendBrowseContactInstructions(ctx, user)
 	}
 	candidate, err := s.repo.FindCandidate(ctx, user.ID)
 	if err != nil {
@@ -995,7 +1003,7 @@ func profileComplete(user models.User) bool {
 }
 
 func contactComplete(user models.User) bool {
-	return strings.TrimSpace(user.ProfileLink) != "" || strings.TrimSpace(user.ContactPhone) != ""
+	return strings.TrimSpace(user.ProfileLink) != ""
 }
 
 var nameRe = regexp.MustCompile(`^[\p{L} -]{2,30}$`)
@@ -1211,7 +1219,6 @@ func editDataButtons() [][]maxapi.Button {
 
 func contactShareButtons() [][]maxapi.Button {
 	return [][]maxapi.Button{
-		{{Text: "📱 Отправить телефон запасным вариантом", RequestContact: true, Payload: "share_contact"}},
 		{{Text: "☰ Главное меню", Payload: "main_menu"}},
 	}
 }
