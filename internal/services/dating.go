@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"regexp"
 	"slices"
 	"strings"
@@ -72,6 +73,8 @@ func (s *DatingService) HandleMessage(ctx context.Context, msg maxapi.MessageUpd
 		return s.ResetMe(ctx, *user)
 	case text == "/admin_reset_store confirm" && s.isAdmin(*user):
 		return s.AdminResetStore(ctx, *user)
+	case strings.HasPrefix(text, "/admin_deeplink ") && s.isAdmin(*user):
+		return s.SendAdminDeepLinkTest(ctx, *user, strings.TrimSpace(strings.TrimPrefix(text, "/admin_deeplink ")))
 	case strings.HasPrefix(text, "/user ") && s.isAdmin(*user):
 		return s.SendUserCard(ctx, *user, strings.TrimSpace(strings.TrimPrefix(text, "/user ")))
 	case strings.HasPrefix(text, "📬 Взаимные лайки"):
@@ -623,6 +626,7 @@ func (s *DatingService) SendAdminPanel(ctx context.Context, user models.User) er
 		"Админ-меню:",
 		"/botstats - общая статистика",
 		"/user id - карточка пользователя по ID",
+		"/admin_deeplink platform_user_id - тест deep link MAX",
 		"/tester_reset_me - очистить свой профиль",
 		"/admin_reset_store confirm - полностью очистить базу бота",
 		"",
@@ -668,7 +672,26 @@ func (s *DatingService) SendUserCard(ctx context.Context, admin models.User, idT
 		{Text: "🚫 Заблокировать", Payload: fmt.Sprintf("admin:block:%d", target.ID)},
 		{Text: "✅ Разблокировать", Payload: fmt.Sprintf("admin:unblock:%d", target.ID)},
 		{Text: "🗑 Удалить видео", Payload: fmt.Sprintf("admin:delete_video:%d", target.ID)},
+	}, {
+		{Text: "🔗 Тест deep link", Payload: fmt.Sprintf("admin:deeplink:%s", target.PlatformUserID)},
 	}})
+}
+
+func (s *DatingService) SendAdminDeepLinkTest(ctx context.Context, admin models.User, platformUserID string) error {
+	platformUserID = strings.TrimSpace(platformUserID)
+	if platformUserID == "" {
+		return s.max.SendText(ctx, admin.PlatformChatID, "Укажите platform_user_id:\n/admin_deeplink 5156654", nil)
+	}
+	shareText := url.QueryEscape("Привет! Это из бота «Знакомства кружки». У нас взаимный лайк 🙂")
+	text := "Тест deep link для MAX user_id: " + platformUserID + "\n\n" +
+		"Нажмите кнопки на телефоне и проверьте, какая откроет профиль или личный чат."
+	return s.max.SendText(ctx, admin.PlatformChatID, text, [][]maxapi.Button{
+		{{Text: "max://user?id", URL: "max://user?id=" + url.QueryEscape(platformUserID)}},
+		{{Text: "max://chat?user_id", URL: "max://chat?user_id=" + url.QueryEscape(platformUserID)}},
+		{{Text: "https user?id", URL: "https://max.ru/user?id=" + url.QueryEscape(platformUserID)}},
+		{{Text: "https chat?user_id", URL: "https://max.ru/chat?user_id=" + url.QueryEscape(platformUserID)}},
+		{{Text: "share fallback", URL: "https://max.ru/:share?text=" + shareText}},
+	})
 }
 
 func (s *DatingService) HandleAdmin(ctx context.Context, user models.User, parts []string) error {
@@ -698,6 +721,10 @@ func (s *DatingService) HandleAdmin(ctx context.Context, user models.User, parts
 		return s.ResetMe(ctx, user)
 	case "reset_store_prompt":
 		return s.max.SendText(ctx, user.PlatformChatID, "Для полной очистки базы отправьте текстом:\n/admin_reset_store confirm", nil)
+	case "deeplink":
+		if len(parts) == 3 {
+			return s.SendAdminDeepLinkTest(ctx, user, parts[2])
+		}
 	case "block":
 		if len(parts) == 3 {
 			if err := s.repo.SetUserStatus(ctx, parseID(parts[2]), models.StatusBlocked); err != nil {
