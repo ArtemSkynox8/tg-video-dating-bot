@@ -160,13 +160,50 @@ func normalizeContacts(attachments []maxapi.Attachment) []maxapi.Contact {
 		if attachment.Type != "contact" {
 			continue
 		}
+		vcf := findPayloadValue(attachment.Payload, []string{"vcf_info", "vcfInfo"})
+		maxInfo := attachment.Payload["max_info"]
 		contacts = append(contacts, maxapi.Contact{
-			Name:   findPayloadValue(attachment.Payload, []string{"name", "full_name", "fullName", "first_name", "firstName"}),
-			Phone:  findPayloadValue(attachment.Payload, []string{"phone", "phone_number", "phoneNumber", "phone_number_normalized"}),
-			UserID: findPayloadValue(attachment.Payload, []string{"user_id", "userId", "id"}),
+			Name:   firstNonEmpty(findPayloadValue(attachment.Payload, []string{"name", "full_name", "fullName", "first_name", "firstName"}), parseVCardField(vcf, "FN")),
+			Phone:  firstNonEmpty(findPayloadValue(attachment.Payload, []string{"phone", "phone_number", "phoneNumber", "phone_number_normalized"}), parseVCardPhone(vcf)),
+			UserID: firstNonEmpty(findPayloadValue(attachment.Payload, []string{"user_id", "userId", "id"}), findPayloadValue(maxInfo, []string{"user_id", "userId", "id"})),
 		})
 	}
 	return contacts
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func parseVCardPhone(vcf string) string {
+	for _, line := range strings.Split(vcf, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(strings.ToUpper(line), "TEL") {
+			if _, value, ok := strings.Cut(line, ":"); ok {
+				return strings.TrimSpace(value)
+			}
+		}
+	}
+	return ""
+}
+
+func parseVCardField(vcf, field string) string {
+	field = strings.ToUpper(field)
+	for _, line := range strings.Split(vcf, "\n") {
+		line = strings.TrimSpace(line)
+		upper := strings.ToUpper(line)
+		if upper == field || strings.HasPrefix(upper, field+":") || strings.HasPrefix(upper, field+";") {
+			if _, value, ok := strings.Cut(line, ":"); ok {
+				return strings.TrimSpace(value)
+			}
+		}
+	}
+	return ""
 }
 
 func findPayloadValue(value any, keys []string) string {
@@ -206,11 +243,11 @@ func shouldLogRawMessage(message *maxapi.Message) bool {
 	if message == nil {
 		return false
 	}
-	if strings.TrimSpace(message.Body.Text) == "" {
+	if strings.TrimSpace(message.Body.Text) == "" && len(message.Body.Attachments) == 0 {
 		return true
 	}
 	for _, attachment := range message.Body.Attachments {
-		if attachment.Type == "contact" || attachment.Type == "share" {
+		if attachment.Type == "share" {
 			return true
 		}
 	}
