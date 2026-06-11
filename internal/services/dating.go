@@ -347,6 +347,7 @@ func (s *DatingService) SaveEditedName(ctx context.Context, user models.User, na
 }
 
 func (s *DatingService) SaveProfileLink(ctx context.Context, user models.User, link string) error {
+	link = extractMaxProfileURL(link)
 	link = normalizeProfileURL(link)
 	if !validProfileLink(link) {
 		return s.max.SendText(ctx, user.PlatformChatID, "Отправьте ссылку MAX в формате:\nhttps://max.ru/u/...", nil)
@@ -997,6 +998,16 @@ func normalizeProfileURL(value string) string {
 	}
 	if strings.HasPrefix(value, "@") {
 		return "https://max.ru/" + strings.TrimPrefix(value, "@")
+	}
+	return value
+}
+
+func extractMaxProfileURL(value string) string {
+	for _, part := range strings.Fields(value) {
+		part = strings.Trim(part, " \t\r\n.,;:!?()[]{}<>\"'")
+		if strings.HasPrefix(part, "https://max.ru/u/") || strings.HasPrefix(part, "http://max.ru/u/") {
+			return part
+		}
 	}
 	return value
 }

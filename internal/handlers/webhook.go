@@ -93,6 +93,9 @@ func normalizeMessage(update maxapi.Update) maxapi.MessageUpdate {
 	if update.User != nil && update.User.ID != "" {
 		from = *update.User
 	}
+	if from.ProfileLink == "" {
+		from.ProfileLink = extractProfileLink(message.Body.Text, message.Body.Attachments)
+	}
 	chatID := from.ID
 	if chatID == "" {
 		chatID = message.Recipient.ChatID
@@ -176,6 +179,31 @@ func normalizeMedia(attachments []maxapi.Attachment) []maxapi.Media {
 		})
 	}
 	return media
+}
+
+func extractProfileLink(text string, attachments []maxapi.Attachment) string {
+	if link := findMaxProfileLink(text); link != "" {
+		return link
+	}
+	for _, attachment := range attachments {
+		if attachment.Type != "share" {
+			continue
+		}
+		if link := findMaxProfileLink(findPayloadValue(attachment.Payload, []string{"url", "link"})); link != "" {
+			return link
+		}
+	}
+	return ""
+}
+
+func findMaxProfileLink(value string) string {
+	for _, part := range strings.Fields(value) {
+		part = strings.Trim(part, " \t\r\n.,;:!?()[]{}<>\"'")
+		if strings.HasPrefix(part, "https://max.ru/u/") || strings.HasPrefix(part, "http://max.ru/u/") {
+			return part
+		}
+	}
+	return ""
 }
 
 func normalizeContacts(attachments []maxapi.Attachment) []maxapi.Contact {
