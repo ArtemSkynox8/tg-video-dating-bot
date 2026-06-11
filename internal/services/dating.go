@@ -3,6 +3,11 @@ package services
 import (
 	"context"
 	"fmt"
+	"image"
+	_ "image/jpeg"
+	_ "image/png"
+	"io"
+	"net/http"
 	"net/url"
 	"regexp"
 	"slices"
@@ -10,23 +15,27 @@ import (
 	"sync"
 	"time"
 
+	"github.com/makiuchi-d/gozxing"
+	"github.com/makiuchi-d/gozxing/qrcode"
+
 	"github.com/ArtemSkynox8/tg-video-dating-bot/internal/maxapi"
 	"github.com/ArtemSkynox8/tg-video-dating-bot/internal/models"
 	"github.com/ArtemSkynox8/tg-video-dating-bot/internal/repositories"
 )
 
 type DatingService struct {
-	repo     *repositories.Repository
-	max      *maxapi.Client
-	adminIDs []string
-	publicBaseURL string
-	premiumPrice string
-	forwards map[string]maxapi.ForwardInfo
-	forwardsMu sync.RWMutex
+	repo                      *repositories.Repository
+	max                       *maxapi.Client
+	adminIDs                  []string
+	publicBaseURL             string
+	premiumPrice              string
+	contactInstructionVideoID string
+	forwards                  map[string]maxapi.ForwardInfo
+	forwardsMu                sync.RWMutex
 }
 
-func NewDatingService(repo *repositories.Repository, max *maxapi.Client, adminIDs []string, publicBaseURL, premiumPrice string) *DatingService {
-	return &DatingService{repo: repo, max: max, adminIDs: adminIDs, publicBaseURL: strings.TrimRight(publicBaseURL, "/"), premiumPrice: premiumPrice, forwards: map[string]maxapi.ForwardInfo{}}
+func NewDatingService(repo *repositories.Repository, max *maxapi.Client, adminIDs []string, publicBaseURL, premiumPrice, contactInstructionVideoID string) *DatingService {
+	return &DatingService{repo: repo, max: max, adminIDs: adminIDs, publicBaseURL: strings.TrimRight(publicBaseURL, "/"), premiumPrice: premiumPrice, contactInstructionVideoID: strings.TrimSpace(contactInstructionVideoID), forwards: map[string]maxapi.ForwardInfo{}}
 }
 
 func (s *DatingService) HandleMessage(ctx context.Context, msg maxapi.MessageUpdate) error {
@@ -107,7 +116,13 @@ func (s *DatingService) HandleMessage(ctx context.Context, msg maxapi.MessageUpd
 	case user.FlowState == models.StateAwaitingEditName:
 		return s.SaveEditedName(ctx, *user, text)
 	case user.FlowState == models.StateAwaitingProfileLink:
-		return s.SaveProfileLink(ctx, *user, text)
+		if text != "" || msg.From.ProfileLink != "" {
+			return s.SaveProfileLink(ctx, *user, firstNonEmptyString(msg.From.ProfileLink, text))
+		}
+		if len(msg.ImageURLs) > 0 {
+			return s.SaveProfileLinkFromQR(ctx, *user, msg.ImageURLs)
+		}
+		return s.SendProfileShareInstructions(ctx, *user)
 	case user.Name == "":
 		return s.SaveNameStep(ctx, *user, text)
 	default:
@@ -209,7 +224,7 @@ func (s *DatingService) HandleCallback(ctx context.Context, cb maxapi.CallbackUp
 		if err := s.repo.SetFlowState(ctx, user.ID, models.StateAwaitingProfileLink); err != nil {
 			return err
 		}
-		return s.max.SendText(ctx, cb.Chat.ID, "Поделитесь своим контактом MAX, чтобы другие пользователи могли связаться с вами после взаимного лайка.\n\nНажмите кнопку ниже или отправьте ссылку MAX вида:\nhttps://max.ru/u/...", contactShareButtons())
+		return s.SendProfileShareInstructions(ctx, *user)
 	case "main_menu":
 		return s.max.SendText(ctx, cb.Chat.ID, "Главное меню:", mainMenuButtons())
 	case "premium":
@@ -282,6 +297,22 @@ func (s *DatingService) SendRecordPrompt(ctx context.Context, user models.User, 
 	return s.max.SendText(ctx, user.PlatformChatID, text+"\n\nОткройте запись в браузере, разрешите камеру и удерживайте красную кнопку.", s.recordButtons(user))
 }
 
+func (s *DatingService) SendProfileShareInstructions(ctx context.Context, user models.User) error {
+	text := "Чтобы другие пользователи могли написать вам после взаимного лайка, отправьте боту ссылку на свой профиль MAX.\n\n" +
+		"Как сделать:\n" +
+		"1. Откройте свой профиль MAX.\n" +
+		"2. Нажмите «Поделиться».\n" +
+		"3. Отправьте профиль в этот чат с ботом.\n\n" +
+		"Если на iOS отправляется только QR-код, пришлите эту QR-картинку сюда — бот попробует извлечь ссылку сам."
+	if err := s.max.SendText(ctx, user.PlatformChatID, text, contactShareButtons()); err != nil {
+		return err
+	}
+	if s.contactInstructionVideoID != "" {
+		_, _ = s.max.SendMediaToDialogOrUser(ctx, user.PlatformDialogID, user.PlatformChatID, s.contactInstructionVideoID, "Короткая видеоинструкция: как поделиться профилем MAX.", nil)
+	}
+	return nil
+}
+
 func (s *DatingService) ResetMe(ctx context.Context, user models.User) error {
 	if err := s.repo.ResetUser(ctx, user.ID); err != nil {
 		return err
@@ -314,7 +345,7 @@ func (s *DatingService) SaveRecordedVideo(ctx context.Context, user models.User,
 	}
 	if strings.TrimSpace(user.ProfileLink) == "" && strings.TrimSpace(user.ContactPhone) == "" {
 		return s.max.SendText(ctx, user.PlatformChatID, "✅ Кружок успешно сохранен.\n\nЧтобы другие пользователи могли написать вам после взаимного лайка, добавьте свой контакт MAX.", [][]maxapi.Button{
-			{{Text: "📱 Поделиться контактом MAX", RequestContact: true, Payload: "share_contact"}},
+			{{Text: "📤 Как поделиться профилем MAX", Payload: "edit_profile_link"}},
 		})
 	}
 	return s.max.SendText(ctx, user.PlatformChatID, "✅ Кружок успешно сохранен.", [][]maxapi.Button{{{Text: "▶️ Начать просмотр", Payload: "browse"}}})
@@ -364,10 +395,24 @@ func (s *DatingService) SaveProfileLink(ctx context.Context, user models.User, l
 	})
 }
 
+func (s *DatingService) SaveProfileLinkFromQR(ctx context.Context, user models.User, imageURLs []string) error {
+	for _, imageURL := range imageURLs {
+		qrText, err := decodeQRFromImageURL(ctx, imageURL)
+		if err != nil {
+			continue
+		}
+		link := extractMaxProfileURL(qrText)
+		if validProfileLink(normalizeProfileURL(link)) {
+			return s.SaveProfileLink(ctx, user, link)
+		}
+	}
+	return s.max.SendText(ctx, user.PlatformChatID, "Не удалось распознать ссылку профиля в QR-коде. Попробуйте отправить QR крупнее или поделиться профилем через кнопку «Поделиться».", contactShareButtons())
+}
+
 func (s *DatingService) SaveContactPhone(ctx context.Context, user models.User, contact maxapi.Contact) error {
 	phone := strings.TrimSpace(contact.Phone)
 	if phone == "" {
-		return s.max.SendText(ctx, user.PlatformChatID, "MAX отправил контакт без номера. Попробуйте отправить ссылку вида:\nhttps://max.ru/u/...", contactShareButtons())
+		return s.SendProfileShareInstructions(ctx, user)
 	}
 	if err := s.repo.UpdateContactPhone(ctx, user.ID, phone); err != nil {
 		return err
@@ -447,7 +492,7 @@ func (s *DatingService) HandleMedia(ctx context.Context, user models.User, media
 		if err := s.repo.SetFlowState(ctx, user.ID, models.StateAwaitingProfileLink); err != nil {
 			return err
 		}
-		return s.max.SendText(ctx, user.PlatformChatID, "✅ Анкета создана.\n\nЧтобы другие пользователи могли написать вам после взаимного лайка, добавьте свой контакт MAX.", contactShareButtons())
+		return s.SendProfileShareInstructions(ctx, user)
 	}
 	return s.max.SendText(ctx, user.PlatformChatID, "✅ Анкета создана. Теперь вы можете смотреть видео других пользователей.", [][]maxapi.Button{
 		{{Text: "▶️ Начать просмотр", Payload: "browse"}},
@@ -477,7 +522,7 @@ func (s *DatingService) SendNextCandidate(ctx context.Context, user models.User)
 		if err := s.repo.SetFlowState(ctx, user.ID, models.StateAwaitingProfileLink); err != nil {
 			return err
 		}
-		return s.max.SendText(ctx, user.PlatformChatID, "Чтобы начать просмотр, сначала добавьте свой контакт MAX. Так другие пользователи смогут написать вам после взаимного лайка.", contactShareButtons())
+		return s.SendProfileShareInstructions(ctx, user)
 	}
 	candidate, err := s.repo.FindCandidate(ctx, user.ID)
 	if err != nil {
@@ -966,6 +1011,15 @@ func shortName(name string) string {
 	return name
 }
 
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
 func contactLine(user models.User) string {
 	return "Контакт: " + displayName(user)
 }
@@ -1010,6 +1064,35 @@ func extractMaxProfileURL(value string) string {
 		}
 	}
 	return value
+}
+
+func decodeQRFromImageURL(ctx context.Context, imageURL string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, imageURL, nil)
+	if err != nil {
+		return "", err
+	}
+	client := &http.Client{Timeout: 12 * time.Second}
+	res, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer res.Body.Close()
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return "", fmt.Errorf("download qr image failed: %s", res.Status)
+	}
+	img, _, err := image.Decode(io.LimitReader(res.Body, 8<<20))
+	if err != nil {
+		return "", err
+	}
+	bitmap, err := gozxing.NewBinaryBitmapFromImage(img)
+	if err != nil {
+		return "", err
+	}
+	result, err := qrcode.NewQRCodeReader().Decode(bitmap, nil)
+	if err != nil {
+		return "", err
+	}
+	return result.GetText(), nil
 }
 
 func validProfileLink(value string) bool {
@@ -1081,14 +1164,14 @@ func editDataButtons() [][]maxapi.Button {
 		{{Text: "Имя", Payload: "edit_name"}},
 		{{Text: "Пол", Payload: "edit_gender"}},
 		{{Text: "Кого смотреть", Payload: "edit_preferred"}},
-		{{Text: "📱 Поделиться контактом MAX", RequestContact: true, Payload: "share_contact"}},
+		{{Text: "📤 Поделиться профилем MAX", Payload: "edit_profile_link"}},
 		{{Text: "☰ Главное меню", Payload: "main_menu"}},
 	}
 }
 
 func contactShareButtons() [][]maxapi.Button {
 	return [][]maxapi.Button{
-		{{Text: "📱 Поделиться контактом MAX", RequestContact: true, Payload: "share_contact"}},
+		{{Text: "📱 Отправить телефон запасным вариантом", RequestContact: true, Payload: "share_contact"}},
 		{{Text: "☰ Главное меню", Payload: "main_menu"}},
 	}
 }

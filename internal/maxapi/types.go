@@ -24,6 +24,7 @@ type MessageUpdate struct {
 	Media     []Media      `json:"media,omitempty"`
 	Contacts  []Contact    `json:"contacts,omitempty"`
 	Forward   *ForwardInfo `json:"forward,omitempty"`
+	ImageURLs []string     `json:"image_urls,omitempty"`
 }
 
 type CallbackUpdate struct {

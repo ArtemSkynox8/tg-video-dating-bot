@@ -7,39 +7,41 @@ import (
 )
 
 type Config struct {
-	AppEnv           string
-	HTTPAddr         string
-	PublicBaseURL    string
-	ReturnToBotURL   string
-	MaxAPIBaseURL    string
-	MaxBotToken      string
-	MaxWebhookSecret string
-	DatabaseURL      string
-	RedisAddr        string
-	UploadDir        string
-	AdminPlatformIDs []string
-	YooKassaShopID    string
-	YooKassaSecretKey string
-	PremiumPrice      string
+	AppEnv                    string
+	HTTPAddr                  string
+	PublicBaseURL             string
+	ReturnToBotURL            string
+	MaxAPIBaseURL             string
+	MaxBotToken               string
+	MaxWebhookSecret          string
+	DatabaseURL               string
+	RedisAddr                 string
+	UploadDir                 string
+	AdminPlatformIDs          []string
+	YooKassaShopID            string
+	YooKassaSecretKey         string
+	PremiumPrice              string
+	ContactInstructionVideoID string
 }
 
 func Load() Config {
 	httpAddr := normalizeHTTPAddr(getEnv("HTTP_ADDR", ""), getEnv("PORT", "8080"))
 	return Config{
-		AppEnv:           getEnv("APP_ENV", "development"),
-		HTTPAddr:         httpAddr,
-		PublicBaseURL:    getEnv("PUBLIC_BASE_URL", "http://localhost:8080"),
-		ReturnToBotURL:   getEnv("RETURN_TO_BOT_URL", "https://max.ru/id550411830268_1_bot"),
-		MaxAPIBaseURL:    getEnv("MAX_API_BASE_URL", "https://platform-api.max.ru"),
-		MaxBotToken:      os.Getenv("MAX_BOT_TOKEN"),
-		MaxWebhookSecret: os.Getenv("MAX_WEBHOOK_SECRET"),
-		DatabaseURL:      getEnv("DATABASE_URL", "postgres://dating:dating@localhost:5432/dating?sslmode=disable"),
-		RedisAddr:        getEnv("REDIS_ADDR", "localhost:6379"),
-		UploadDir:        getEnv("UPLOAD_DIR", "/app/uploads"),
-		AdminPlatformIDs: splitCSV(os.Getenv("ADMIN_PLATFORM_IDS")),
-		YooKassaShopID:    os.Getenv("YOOKASSA_SHOP_ID"),
-		YooKassaSecretKey: os.Getenv("YOOKASSA_SECRET_KEY"),
-		PremiumPrice:      getEnv("PREMIUM_PRICE", "199.00"),
+		AppEnv:                    getEnv("APP_ENV", "development"),
+		HTTPAddr:                  httpAddr,
+		PublicBaseURL:             getEnv("PUBLIC_BASE_URL", "http://localhost:8080"),
+		ReturnToBotURL:            getEnv("RETURN_TO_BOT_URL", "https://max.ru/id550411830268_1_bot"),
+		MaxAPIBaseURL:             getEnv("MAX_API_BASE_URL", "https://platform-api.max.ru"),
+		MaxBotToken:               os.Getenv("MAX_BOT_TOKEN"),
+		MaxWebhookSecret:          os.Getenv("MAX_WEBHOOK_SECRET"),
+		DatabaseURL:               getEnv("DATABASE_URL", "postgres://dating:dating@localhost:5432/dating?sslmode=disable"),
+		RedisAddr:                 getEnv("REDIS_ADDR", "localhost:6379"),
+		UploadDir:                 getEnv("UPLOAD_DIR", "/app/uploads"),
+		AdminPlatformIDs:          splitCSV(os.Getenv("ADMIN_PLATFORM_IDS")),
+		YooKassaShopID:            os.Getenv("YOOKASSA_SHOP_ID"),
+		YooKassaSecretKey:         os.Getenv("YOOKASSA_SECRET_KEY"),
+		PremiumPrice:              getEnv("PREMIUM_PRICE", "199.00"),
+		ContactInstructionVideoID: os.Getenv("CONTACT_INSTRUCTION_VIDEO_ID"),
 	}
 }
 

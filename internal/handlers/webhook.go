@@ -112,6 +112,7 @@ func normalizeMessage(update maxapi.Update) maxapi.MessageUpdate {
 		Media:     normalizeMedia(message.Body.Attachments),
 		Contacts:  normalizeContacts(message.Body.Attachments),
 		Forward:   normalizeForward(message.Link),
+		ImageURLs: normalizeImageURLs(message.Body.Attachments),
 	}
 }
 
@@ -194,6 +195,19 @@ func extractProfileLink(text string, attachments []maxapi.Attachment) string {
 		}
 	}
 	return ""
+}
+
+func normalizeImageURLs(attachments []maxapi.Attachment) []string {
+	urls := make([]string, 0, len(attachments))
+	for _, attachment := range attachments {
+		if attachment.Type != "photo" && attachment.Type != "image" && attachment.Type != "picture" && attachment.Type != "file" {
+			continue
+		}
+		if link := findPayloadValue(attachment.Payload, []string{"url", "image_url", "imageUrl", "download_url", "downloadUrl"}); link != "" {
+			urls = append(urls, link)
+		}
+	}
+	return urls
 }
 
 func findMaxProfileLink(value string) string {
@@ -299,7 +313,7 @@ func shouldLogRawMessage(message *maxapi.Message) bool {
 		return true
 	}
 	for _, attachment := range message.Body.Attachments {
-		if attachment.Type == "share" {
+		if attachment.Type == "share" || attachment.Type == "photo" || attachment.Type == "image" || attachment.Type == "picture" || attachment.Type == "file" {
 			return true
 		}
 	}
