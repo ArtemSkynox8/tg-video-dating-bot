@@ -791,11 +791,12 @@ func (s *DatingService) premiumPaymentURL(user models.User) string {
 
 func mainMenuButtons() [][]maxapi.Button {
 	return [][]maxapi.Button{
+		{{Text: "▶️ Начать просмотр", Payload: "browse"}},
 		{{Text: "📬 Взаимные лайки", Payload: "matches"}},
 		{{Text: "✏️ Изменить анкету", Payload: "edit_profile"}},
 		{
 			{Text: "🚨 Пожаловаться", Payload: "menu_report"},
-			{Text: "💎 Управление подпиской", Payload: "premium"},
+			{Text: "💎 Подписка", Payload: "premium"},
 		},
 	}
 }
