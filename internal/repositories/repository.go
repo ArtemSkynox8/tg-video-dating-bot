@@ -412,6 +412,41 @@ func (r *Repository) ListUsers(ctx context.Context, limit int) ([]models.User, e
 	return users, rows.Err()
 }
 
+func (r *Repository) CreatePremiumPayment(ctx context.Context, userID int64, amount, provider, status, externalID string) error {
+	_, err := r.db.Exec(ctx, `
+		insert into premium_payments (user_id, amount, provider, status, external_id)
+		values ($1, $2::numeric, $3, $4, nullif($5, ''))`,
+		userID, amount, provider, status, externalID)
+	return err
+}
+
+func (r *Repository) LatestPremiumPayment(ctx context.Context, userID int64) (string, string, error) {
+	var externalID, status string
+	err := r.db.QueryRow(ctx, `
+		select coalesce(external_id, ''), status
+		from premium_payments
+		where user_id = $1 and provider = 'yookassa'
+		order by created_at desc
+		limit 1`, userID).Scan(&externalID, &status)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", "", ErrNotFound
+		}
+		return "", "", err
+	}
+	return externalID, status, nil
+}
+
+func (r *Repository) UpdatePremiumPaymentStatus(ctx context.Context, externalID, status string) error {
+	_, err := r.db.Exec(ctx, `update premium_payments set status = $2 where external_id = $1`, externalID, status)
+	return err
+}
+
+func (r *Repository) SetPremium(ctx context.Context, userID int64) error {
+	_, err := r.db.Exec(ctx, `update users set is_premium = true, updated_at = now() where id = $1`, userID)
+	return err
+}
+
 func (r *Repository) SetUserStatus(ctx context.Context, userID int64, status string) error {
 	_, err := r.db.Exec(ctx, `
 		update users set status = $2, restricted_until = null, updated_at = now()

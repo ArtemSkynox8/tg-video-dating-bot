@@ -258,16 +258,11 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
       position: absolute;
       inset: 7px;
       border-radius: 50%;
-      background: #202b36 url("/assets/recorder-theme/dark.jpg") center / cover no-repeat;
+      background: #202b36 url("/assets/recorder-theme/light.jpg") center / cover no-repeat;
       filter: blur(15px);
       transform: scale(1.12);
       opacity: .9;
       z-index: 0;
-    }
-    @media (prefers-color-scheme: light) {
-      .preview::before {
-        background-image: url("/assets/recorder-theme/light.jpg");
-      }
     }
     video {
       position: relative;
@@ -463,9 +458,7 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
     const maxDuration = 30;
     let stream, recorder, chunks = [], startedAt = 0, tick = 0, drawTick = 0, stopped = false, holding = false, starting = false;
     const chatBg = new Image();
-    chatBg.src = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
-      ? "/assets/recorder-theme/light.jpg"
-      : "/assets/recorder-theme/dark.jpg";
+    chatBg.src = "/assets/recorder-theme/light.jpg";
 
     function setStatus(text) { statusEl.textContent = text; }
     function format(seconds) {

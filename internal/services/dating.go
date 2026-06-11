@@ -146,7 +146,11 @@ func (s *DatingService) HandleCallback(ctx context.Context, cb maxapi.CallbackUp
 		}
 		return s.SendRecordPrompt(ctx, *user, "Запишите новый кружок на странице записи. Старое видео станет неактивным.")
 	case "edit_profile":
-		return s.max.SendText(ctx, cb.Chat.ID, "Что изменить?", editProfileButtons())
+		return s.max.SendText(ctx, cb.Chat.ID, "Что хотите изменить?", editProfileButtons())
+	case "edit_profile_menu":
+		return s.max.SendText(ctx, cb.Chat.ID, "Что хотите изменить?", editProfileButtons())
+	case "edit_data":
+		return s.max.SendText(ctx, cb.Chat.ID, "Какие данные изменить?", editDataButtons())
 	case "edit_name":
 		if err := s.repo.SetFlowState(ctx, user.ID, models.StateAwaitingEditName); err != nil {
 			return err
@@ -162,8 +166,10 @@ func (s *DatingService) HandleCallback(ctx context.Context, cb maxapi.CallbackUp
 			return err
 		}
 		return s.max.SendText(ctx, cb.Chat.ID, "Какие видео хотите получать?", preferredButtons())
+	case "main_menu":
+		return s.max.SendText(ctx, cb.Chat.ID, "Главное меню:", mainMenuButtons())
 	case "premium":
-		return s.max.SendText(ctx, cb.Chat.ID, "💎 Premium подготовлен как отдельный модуль. Платежи подключим после проверки платежных возможностей MAX.", mainMenuButtons())
+		return s.SendPremiumOffer(ctx, *user)
 	case "menu_report":
 		return s.SendReportableMatches(ctx, *user)
 	case "report_user":
@@ -205,6 +211,24 @@ func (s *DatingService) SendCommands(ctx context.Context, user models.User) erro
 		"/admin_reset_store confirm - полностью очистить базу",
 	}, "\n")
 	return s.max.SendText(ctx, user.PlatformChatID, text, mainMenuButtons())
+}
+
+func (s *DatingService) SendPremiumOffer(ctx context.Context, user models.User) error {
+	if user.IsPremium {
+		return s.max.SendText(ctx, user.PlatformChatID, "💎 Premium уже активен.\n\nВы можете писать первым без взаимного лайка и смотреть кружки без ограничений.", mainMenuButtons())
+	}
+	offerURL := s.publicBaseURL + "/offer"
+	text := "💎 Premium доступ\n\n" +
+		"Что входит:\n" +
+		"• возможность писать первым без взаимного лайка;\n" +
+		"• неограниченный просмотр кружков.\n\n" +
+		"Нажимая кнопку оплаты, вы соглашаетесь с условиями оферты:\n" + offerURL
+	return s.max.SendText(ctx, user.PlatformChatID, text, [][]maxapi.Button{
+		{{Text: "💎 Оплатить Premium доступ", URL: s.premiumPaymentURL(user)}},
+		{{Text: "▶️ Продолжить просмотр", Payload: "browse"}},
+		{{Text: "📄 Оферта", URL: offerURL}},
+		{{Text: "☰ Главное меню", Payload: "main_menu"}},
+	})
 }
 
 func (s *DatingService) SendRecordPrompt(ctx context.Context, user models.User, text string) error {
@@ -379,25 +403,33 @@ func (s *DatingService) HandleBrowseAction(ctx context.Context, user models.User
 		return err
 	}
 	if action == models.ActionLike {
-		if _, err := s.repo.CreateLike(ctx, user.ID, ownerID); err != nil {
-			return err
-		}
-		if err := s.repo.EnqueuePriority(ctx, ownerID, user.ID); err != nil {
+		owner, err := s.repo.GetUserByID(ctx, ownerID)
+		if err != nil {
 			return err
 		}
 		reverse, err := s.repo.HasReverseLike(ctx, user.ID, ownerID)
 		if err != nil {
 			return err
 		}
+		if !reverse && !user.IsPremium {
+			return s.SendPremiumOffer(ctx, user)
+		}
+		if _, err := s.repo.CreateLike(ctx, user.ID, ownerID); err != nil {
+			return err
+		}
+		if err := s.repo.EnqueuePriority(ctx, ownerID, user.ID); err != nil {
+			return err
+		}
 		if reverse {
 			if err := s.repo.CreateMatch(ctx, user.ID, ownerID); err != nil {
 				return err
 			}
-			return s.max.SendText(ctx, chatID, "❤️ У вас новый взаимный лайк!", [][]maxapi.Button{
-				{{Text: "📬 Взаимные лайки", Payload: "matches"}},
-				{{Text: "▶️ Продолжить просмотр", Payload: "browse"}},
-			})
+			if err := s.max.SendText(ctx, owner.PlatformChatID, "❤️ У вас новый взаимный лайк!\n\n"+contactLine(user), contactButtons(user, true)); err != nil {
+				return err
+			}
+			return s.max.SendText(ctx, chatID, "❤️ У вас новый взаимный лайк!\n\n"+contactLine(*owner), contactButtons(*owner, true))
 		}
+		return s.max.SendText(ctx, chatID, "💎 Premium: контакт открыт без взаимного лайка.\n\n"+contactLine(*owner), contactButtons(*owner, false))
 	}
 	return s.SendNextCandidate(ctx, user)
 }
@@ -670,7 +702,7 @@ func shortName(name string) string {
 }
 
 func contactLine(user models.User) string {
-	return fmt.Sprintf("%s | 💬 Написать | 🎥 Смотреть видео | 🗑 Удалить из списка", displayName(user))
+	return "Контакт: " + displayName(user)
 }
 
 func profileURL(user models.User) string {
@@ -678,6 +710,17 @@ func profileURL(user models.User) string {
 		return user.ProfileLink
 	}
 	return "https://max.ru/id" + user.PlatformUserID
+}
+
+func contactButtons(user models.User, includeMatches bool) [][]maxapi.Button {
+	buttons := [][]maxapi.Button{
+		{{Text: "💬 Написать " + shortName(user.Name), URL: profileURL(user)}},
+	}
+	if includeMatches {
+		buttons = append(buttons, []maxapi.Button{{Text: "📬 Взаимные лайки", Payload: "matches"}})
+	}
+	buttons = append(buttons, []maxapi.Button{{Text: "▶️ Продолжить просмотр", Payload: "browse"}})
+	return buttons
 }
 
 func genderButtons() [][]maxapi.Button {
@@ -689,11 +732,14 @@ func preferredButtons() [][]maxapi.Button {
 }
 
 func browseButtons(videoID, ownerID int64) [][]maxapi.Button {
-	return [][]maxapi.Button{{
-		{Text: "❤️ Написать", Payload: fmt.Sprintf("like:%d:%d", videoID, ownerID)},
-		{Text: "⏭ Следующий", Payload: fmt.Sprintf("next:%d:%d", videoID, ownerID)},
-		{Text: "🚨 Пожаловаться", Payload: fmt.Sprintf("report:%d:%d", videoID, ownerID)},
-	}}
+	return [][]maxapi.Button{
+		{{Text: "❤️ Написать", Payload: fmt.Sprintf("like:%d:%d", videoID, ownerID)}},
+		{{Text: "⏭ Следующий", Payload: fmt.Sprintf("next:%d:%d", videoID, ownerID)}},
+		{
+			{Text: "🚨 Пожаловаться", Payload: fmt.Sprintf("report:%d:%d", videoID, ownerID)},
+			{Text: "☰ Меню", Payload: "main_menu"},
+		},
+	}
 }
 
 func reportButtons(videoID, ownerID string) [][]maxapi.Button {
@@ -715,11 +761,20 @@ func userReportButtons(userID string) [][]maxapi.Button {
 }
 
 func editProfileButtons() [][]maxapi.Button {
-	return [][]maxapi.Button{{
-		{Text: "Имя", Payload: "edit_name"},
-		{Text: "Пол", Payload: "edit_gender"},
-		{Text: "Кого смотреть", Payload: "edit_preferred"},
-	}}
+	return [][]maxapi.Button{
+		{{Text: "🎥 Изменить видео", Payload: "rewrite_video"}},
+		{{Text: "✏️ Изменить данные", Payload: "edit_data"}},
+		{{Text: "☰ Главное меню", Payload: "main_menu"}},
+	}
+}
+
+func editDataButtons() [][]maxapi.Button {
+	return [][]maxapi.Button{
+		{{Text: "Имя", Payload: "edit_name"}},
+		{{Text: "Пол", Payload: "edit_gender"}},
+		{{Text: "Кого смотреть", Payload: "edit_preferred"}},
+		{{Text: "☰ Главное меню", Payload: "main_menu"}},
+	}
 }
 
 func (s *DatingService) recordButtons(user models.User) [][]maxapi.Button {
@@ -730,13 +785,17 @@ func (s *DatingService) recordURL(user models.User) string {
 	return s.publicBaseURL + "/mini/record?u=" + user.PlatformUserID
 }
 
+func (s *DatingService) premiumPaymentURL(user models.User) string {
+	return s.publicBaseURL + "/pay?u=" + user.PlatformUserID
+}
+
 func mainMenuButtons() [][]maxapi.Button {
-	return [][]maxapi.Button{{
-		{Text: "📬 Взаимные лайки", Payload: "matches"},
-		{Text: "🎥 Перезаписать видео", Payload: "rewrite_video"},
-	}, {
-		{Text: "✏️ Поменять данные анкеты", Payload: "edit_profile"},
-		{Text: "💎 Управление подпиской", Payload: "premium"},
-		{Text: "🚨 Пожаловаться", Payload: "menu_report"},
-	}}
+	return [][]maxapi.Button{
+		{{Text: "📬 Взаимные лайки", Payload: "matches"}},
+		{{Text: "✏️ Изменить анкету", Payload: "edit_profile"}},
+		{
+			{Text: "🚨 Пожаловаться", Payload: "menu_report"},
+			{Text: "💎 Управление подпиской", Payload: "premium"},
+		},
+	}
 }

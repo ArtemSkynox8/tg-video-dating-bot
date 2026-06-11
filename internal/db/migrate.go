@@ -111,9 +111,12 @@ create table if not exists premium_payments (
     user_id bigint not null references users(id) on delete cascade,
     amount numeric(12, 2) not null,
     provider text not null,
+    external_id text,
     status text not null,
     created_at timestamptz not null default now()
 );
+
+alter table premium_payments add column if not exists external_id text;
 
 create table if not exists user_action_logs (
     id bigserial primary key,
@@ -131,4 +134,6 @@ create index if not exists matches_user1_idx on matches(user1_id);
 create index if not exists matches_user2_idx on matches(user2_id);
 create index if not exists priority_queue_target_idx on priority_queue(target_user_id, expires_at);
 create index if not exists video_reports_reported_idx on video_reports(reported_user_id, created_at);
+create index if not exists premium_payments_user_status_idx on premium_payments(user_id, status, created_at desc);
+create index if not exists premium_payments_external_idx on premium_payments(external_id);
 `

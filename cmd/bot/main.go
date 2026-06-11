@@ -42,6 +42,9 @@ func main() {
 	mux.Handle("POST /mini/", miniapp)
 	mux.Handle("GET /media/", miniapp)
 	mux.Handle("GET /assets/recorder-theme/", miniapp)
+	mux.Handle("GET /offer", miniapp)
+	mux.Handle("GET /pay", miniapp)
+	mux.Handle("GET /pay/success", miniapp)
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
@@ -111,6 +114,7 @@ func initializeBot(ctx context.Context, cfg config.Config, webhook *dynamicWebho
 	webhook.Set(handlers.NewWebhookHandler(cfg, botService))
 	miniMux := http.NewServeMux()
 	handlers.NewMiniAppHandler(cfg, repo, maxClient).Register(miniMux)
+	handlers.NewPaymentHandler(cfg, repo).Register(miniMux)
 	miniapp.Set(miniMux)
 	log.Printf("bot services initialized")
 
