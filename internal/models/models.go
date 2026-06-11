@@ -56,4 +56,5 @@ const (
 	StateAwaitingVideo = "awaiting_video"
 	StateAwaitingRewriteVideo = "awaiting_rewrite_video"
 	StateAwaitingEditName = "awaiting_edit_name"
+	StateAwaitingProfileLink = "awaiting_profile_link"
 )

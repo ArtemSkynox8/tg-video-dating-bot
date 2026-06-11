@@ -50,6 +50,8 @@ func (s *DatingService) HandleMessage(ctx context.Context, msg maxapi.MessageUpd
 		return s.max.SendText(ctx, user.PlatformChatID, "Что хотите изменить?", editProfileButtons())
 	case text == "/subscription":
 		return s.SendPremiumOffer(ctx, *user)
+	case strings.HasPrefix(text, "/link "):
+		return s.SaveProfileLink(ctx, *user, strings.TrimSpace(strings.TrimPrefix(text, "/link ")))
 	case text == "/admin" && s.isAdmin(*user):
 		return s.SendAdminPanel(ctx, *user)
 	case text == "/botstats" && s.isAdmin(*user):
@@ -81,6 +83,8 @@ func (s *DatingService) HandleMessage(ctx context.Context, msg maxapi.MessageUpd
 		return s.SaveNameStep(ctx, *user, text)
 	case user.FlowState == models.StateAwaitingEditName:
 		return s.SaveEditedName(ctx, *user, text)
+	case user.FlowState == models.StateAwaitingProfileLink:
+		return s.SaveProfileLink(ctx, *user, text)
 	case user.Name == "":
 		return s.SaveNameStep(ctx, *user, text)
 	default:
@@ -174,12 +178,17 @@ func (s *DatingService) HandleCallback(ctx context.Context, cb maxapi.CallbackUp
 			return err
 		}
 		return s.max.SendText(ctx, cb.Chat.ID, "Какие видео хотите получать?", preferredButtons())
+	case "edit_profile_link":
+		if err := s.repo.SetFlowState(ctx, user.ID, models.StateAwaitingProfileLink); err != nil {
+			return err
+		}
+		return s.max.SendText(ctx, cb.Chat.ID, "Отправьте свою ссылку MAX вида:\nhttps://max.ru/u/...\n\nЕё можно получить через «Поделиться» в своём профиле.", nil)
 	case "main_menu":
 		return s.max.SendText(ctx, cb.Chat.ID, "Главное меню:", mainMenuButtons())
 	case "premium":
 		return s.SendPremiumOffer(ctx, *user)
 	case "missing_profile_link":
-		return s.max.SendText(ctx, cb.Chat.ID, "MAX не передал публичную ссылку профиля этого пользователя. Попросите его открыть бота заново через /start, после этого ссылка для личных сообщений обновится.", mainMenuButtons())
+		return s.max.SendText(ctx, cb.Chat.ID, "У этого пользователя пока не добавлена ссылка MAX для личных сообщений. Попросите его отправить боту команду:\n/link https://max.ru/u/...", mainMenuButtons())
 	case "menu_report":
 		return s.SendReportableMatches(ctx, *user)
 	case "report_user":
@@ -216,6 +225,7 @@ func (s *DatingService) SendCommands(ctx context.Context, user models.User) erro
 		"/matches - взаимные лайки",
 		"/profile - изменить анкету",
 		"/subscription - подписка",
+		"/link ссылка - сохранить ссылку MAX",
 		"/help - помощь",
 	}, "\n")
 	return s.max.SendText(ctx, user.PlatformChatID, text, mainMenuButtons())
@@ -302,6 +312,20 @@ func (s *DatingService) SaveEditedName(ctx context.Context, user models.User, na
 		return err
 	}
 	return s.max.SendText(ctx, user.PlatformChatID, "Имя обновлено.", mainMenuButtons())
+}
+
+func (s *DatingService) SaveProfileLink(ctx context.Context, user models.User, link string) error {
+	link = normalizeProfileURL(link)
+	if !validProfileLink(link) {
+		return s.max.SendText(ctx, user.PlatformChatID, "Отправьте ссылку MAX в формате:\nhttps://max.ru/u/...", nil)
+	}
+	if err := s.repo.UpdateProfileLink(ctx, user.ID, link); err != nil {
+		return err
+	}
+	if err := s.repo.ClearFlowState(ctx, user.ID); err != nil {
+		return err
+	}
+	return s.max.SendText(ctx, user.PlatformChatID, "Ссылка MAX сохранена. Теперь при взаимном лайке или Premium-контакте кнопка «Написать» будет открывать личные сообщения.", mainMenuButtons())
 }
 
 func (s *DatingService) SaveGenderStep(ctx context.Context, user models.User, gender string) error {
@@ -742,6 +766,11 @@ func normalizeProfileURL(value string) string {
 	return value
 }
 
+func validProfileLink(value string) bool {
+	value = strings.TrimSpace(value)
+	return strings.HasPrefix(value, "https://max.ru/u/") || strings.HasPrefix(value, "http://max.ru/u/")
+}
+
 func contactButtons(user models.User, includeMatches bool) [][]maxapi.Button {
 	buttons := [][]maxapi.Button{}
 	if url := profileURL(user); url != "" {
@@ -806,6 +835,7 @@ func editDataButtons() [][]maxapi.Button {
 		{{Text: "Имя", Payload: "edit_name"}},
 		{{Text: "Пол", Payload: "edit_gender"}},
 		{{Text: "Кого смотреть", Payload: "edit_preferred"}},
+		{{Text: "Ссылка MAX", Payload: "edit_profile_link"}},
 		{{Text: "☰ Главное меню", Payload: "main_menu"}},
 	}
 }

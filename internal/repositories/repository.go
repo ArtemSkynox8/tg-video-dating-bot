@@ -77,6 +77,11 @@ func (r *Repository) UpdatePreferredGender(ctx context.Context, userID int64, pr
 	return err
 }
 
+func (r *Repository) UpdateProfileLink(ctx context.Context, userID int64, profileLink string) error {
+	_, err := r.db.Exec(ctx, `update users set profile_link = nullif($2, ''), updated_at = now() where id = $1`, userID, profileLink)
+	return err
+}
+
 func (r *Repository) SetFlowState(ctx context.Context, userID int64, state string) error {
 	_, err := r.db.Exec(ctx, `update users set flow_state = $2, updated_at = now() where id = $1`, userID, state)
 	return err
