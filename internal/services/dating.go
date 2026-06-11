@@ -182,7 +182,7 @@ func (s *DatingService) HandleCallback(ctx context.Context, cb maxapi.CallbackUp
 		if err := s.repo.SetFlowState(ctx, user.ID, models.StateAwaitingProfileLink); err != nil {
 			return err
 		}
-		return s.max.SendText(ctx, cb.Chat.ID, "Отправьте свою ссылку MAX вида:\nhttps://max.ru/u/...\n\nЕё можно получить через «Поделиться» в своём профиле.", nil)
+		return s.max.SendText(ctx, cb.Chat.ID, "Поделитесь своим контактом, чтобы другие пользователи могли написать вам после взаимного лайка.\n\nОтправьте ссылку MAX вида:\nhttps://max.ru/u/...\n\nЕё можно получить через «Поделиться» в своём профиле.", nil)
 	case "main_menu":
 		return s.max.SendText(ctx, cb.Chat.ID, "Главное меню:", mainMenuButtons())
 	case "premium":
@@ -835,7 +835,7 @@ func editDataButtons() [][]maxapi.Button {
 		{{Text: "Имя", Payload: "edit_name"}},
 		{{Text: "Пол", Payload: "edit_gender"}},
 		{{Text: "Кого смотреть", Payload: "edit_preferred"}},
-		{{Text: "Ссылка MAX", Payload: "edit_profile_link"}},
+		{{Text: "💬 Поделиться своим контактом", Payload: "edit_profile_link"}},
 		{{Text: "☰ Главное меню", Payload: "main_menu"}},
 	}
 }
