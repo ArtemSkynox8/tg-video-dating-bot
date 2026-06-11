@@ -79,6 +79,8 @@ func (s *DatingService) HandleMessage(ctx context.Context, msg maxapi.MessageUpd
 		return s.SendAdminDeepLinkTextTest(ctx, *user, strings.TrimSpace(strings.TrimPrefix(text, "/admin_deeplink_text ")))
 	case strings.HasPrefix(text, "/admin_phone_link_text ") && s.isAdmin(*user):
 		return s.SendAdminPhoneLinkTextTest(ctx, *user, strings.TrimSpace(strings.TrimPrefix(text, "/admin_phone_link_text ")))
+	case strings.HasPrefix(text, "/admin_send_contact ") && s.isAdmin(*user):
+		return s.SendAdminContactCardTest(ctx, *user, strings.TrimSpace(strings.TrimPrefix(text, "/admin_send_contact ")))
 	case strings.HasPrefix(text, "/user ") && s.isAdmin(*user):
 		return s.SendUserCard(ctx, *user, strings.TrimSpace(strings.TrimPrefix(text, "/user ")))
 	case strings.HasPrefix(text, "📬 Взаимные лайки"):
@@ -633,6 +635,7 @@ func (s *DatingService) SendAdminPanel(ctx context.Context, user models.User) er
 		"/admin_deeplink platform_user_id - тест deep link MAX",
 		"/admin_deeplink_text platform_user_id - тест ссылок текстом",
 		"/admin_phone_link_text phone - тест ссылок по телефону",
+		"/admin_send_contact phone name - тест contact card",
 		"/tester_reset_me - очистить свой профиль",
 		"/admin_reset_store confirm - полностью очистить базу бота",
 		"",
@@ -751,6 +754,20 @@ func (s *DatingService) SendAdminPhoneLinkTextTest(ctx context.Context, admin mo
 		"Если один из вариантов откроет профиль или чат в MAX, напишите какой именно.",
 	}, "\n")
 	return s.max.SendText(ctx, admin.PlatformChatID, text, nil)
+}
+
+func (s *DatingService) SendAdminContactCardTest(ctx context.Context, admin models.User, input string) error {
+	fields := strings.Fields(strings.TrimSpace(input))
+	if len(fields) == 0 {
+		return s.max.SendText(ctx, admin.PlatformChatID, "Укажите телефон и имя:\n/admin_send_contact 79994589830 Artem", nil)
+	}
+	phone := fields[0]
+	name := "Test Contact"
+	if len(fields) > 1 {
+		name = strings.Join(fields[1:], " ")
+	}
+	results := s.max.SendContactCardTests(ctx, admin.PlatformChatID, name, phone)
+	return s.max.SendText(ctx, admin.PlatformChatID, "Результат теста contact card:\n"+strings.Join(results, "\n"), nil)
 }
 
 func (s *DatingService) HandleAdmin(ctx context.Context, user models.User, parts []string) error {

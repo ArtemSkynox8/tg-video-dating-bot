@@ -40,6 +40,63 @@ func (c *Client) SendText(ctx context.Context, userID, text string, buttons [][]
 	return c.post(ctx, "/messages?user_id="+url.QueryEscape(userID), body, nil)
 }
 
+func (c *Client) SendContactCardTests(ctx context.Context, userID, name, phone string) []string {
+	path := "/messages?user_id=" + url.QueryEscape(userID)
+	vcard := "BEGIN:VCARD\nVERSION:3.0\nFN:" + name + "\nTEL;TYPE=CELL:" + phone + "\nEND:VCARD"
+	tests := []struct {
+		name string
+		body map[string]any
+	}{
+		{
+			name: "contact:name_phone",
+			body: map[string]any{
+				"text": "Тест contact attachment: name + phone",
+				"attachments": []map[string]any{{
+					"type": "contact",
+					"payload": map[string]any{
+						"name":  name,
+						"phone": phone,
+					},
+				}},
+			},
+		},
+		{
+			name: "contact:full_name_phone_number",
+			body: map[string]any{
+				"text": "Тест contact attachment: full_name + phone_number",
+				"attachments": []map[string]any{{
+					"type": "contact",
+					"payload": map[string]any{
+						"full_name":    name,
+						"phone_number": phone,
+					},
+				}},
+			},
+		},
+		{
+			name: "contact:vcf_info",
+			body: map[string]any{
+				"text": "Тест contact attachment: vcf_info",
+				"attachments": []map[string]any{{
+					"type": "contact",
+					"payload": map[string]any{
+						"vcf_info": vcard,
+					},
+				}},
+			},
+		},
+	}
+	results := make([]string, 0, len(tests))
+	for _, test := range tests {
+		if err := c.post(ctx, path, test.body, nil); err != nil {
+			results = append(results, test.name+": "+err.Error())
+			continue
+		}
+		results = append(results, test.name+": OK")
+	}
+	return results
+}
+
 func (c *Client) SendMedia(ctx context.Context, userID, mediaID, caption string, buttons [][]Button) (string, error) {
 	return c.sendVideo(ctx, "/messages?user_id="+url.QueryEscape(userID), mediaID, caption, buttons)
 }
