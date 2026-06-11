@@ -42,6 +42,14 @@ func (s *DatingService) HandleMessage(ctx context.Context, msg maxapi.MessageUpd
 		return s.Start(ctx, *user)
 	case text == "/commands" || text == "/help":
 		return s.SendCommands(ctx, *user)
+	case text == "/browse":
+		return s.SendNextCandidate(ctx, *user)
+	case text == "/matches":
+		return s.SendMatches(ctx, *user)
+	case text == "/profile":
+		return s.max.SendText(ctx, user.PlatformChatID, "Что хотите изменить?", editProfileButtons())
+	case text == "/subscription":
+		return s.SendPremiumOffer(ctx, *user)
 	case text == "/admin" && s.isAdmin(*user):
 		return s.SendAdminPanel(ctx, *user)
 	case text == "/botstats" && s.isAdmin(*user):
@@ -65,7 +73,7 @@ func (s *DatingService) HandleMessage(ctx context.Context, msg maxapi.MessageUpd
 		return s.SendUserCard(ctx, *user, strings.TrimSpace(strings.TrimPrefix(text, "/user ")))
 	case strings.HasPrefix(text, "📬 Взаимные лайки"):
 		return s.SendMatches(ctx, *user)
-	case text == "▶️ Начать просмотр" || text == "/browse":
+	case text == "▶️ Начать просмотр":
 		return s.SendNextCandidate(ctx, *user)
 	case len(msg.Media) > 0:
 		return s.HandleMedia(ctx, *user, msg.Media[0])
@@ -200,15 +208,13 @@ func (s *DatingService) Start(ctx context.Context, user models.User) error {
 
 func (s *DatingService) SendCommands(ctx context.Context, user models.User) error {
 	text := strings.Join([]string{
-		"Команды:",
-		"/start - открыть бот",
-		"/commands - список команд",
-		"/browse - начать просмотр",
-		"/record - записать или перезаписать кружок",
-		"/tester_reset_me - очистить свой профиль",
-		"/admin - админ-панель",
-		"/user id - карточка пользователя",
-		"/admin_reset_store confirm - полностью очистить базу",
+		"Команды бота знакомств:",
+		"/start - открыть главное меню",
+		"/browse - начать просмотр анкет",
+		"/matches - взаимные лайки",
+		"/profile - изменить анкету",
+		"/subscription - подписка",
+		"/help - помощь",
 	}, "\n")
 	return s.max.SendText(ctx, user.PlatformChatID, text, mainMenuButtons())
 }
