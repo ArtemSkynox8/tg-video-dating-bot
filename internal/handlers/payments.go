@@ -100,7 +100,7 @@ func (h *PaymentHandler) success(w http.ResponseWriter, r *http.Request) {
 		h.renderPayMessage(w, "Premium оплачен", "Оплата прошла, но доступ не включился автоматически. Напишите администратору.")
 		return
 	}
-	h.renderPayMessage(w, "Premium активирован", "Теперь вы можете писать первым без взаимного лайка и смотреть кружки без ограничений.")
+	h.renderPayMessage(w, "Premium активирован", "Сейчас вернём вас в бот. Если страница не закрылась автоматически, нажмите кнопку ниже.", true)
 }
 
 type yooKassaPayment struct {
@@ -181,12 +181,14 @@ func (h *PaymentHandler) yooKassaRequest(ctx context.Context, method, path strin
 	return json.NewDecoder(resp.Body).Decode(out)
 }
 
-func (h *PaymentHandler) renderPayMessage(w http.ResponseWriter, title, text string) {
+func (h *PaymentHandler) renderPayMessage(w http.ResponseWriter, title, text string, autoReturn ...bool) {
+	shouldAutoReturn := len(autoReturn) > 0 && autoReturn[0]
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = payMessageTemplate.Execute(w, map[string]string{
+	_ = payMessageTemplate.Execute(w, map[string]any{
 		"Title": title,
 		"Text": text,
 		"BotURL": h.cfg.ReturnToBotURL,
+		"AutoReturn": shouldAutoReturn,
 	})
 }
 
@@ -204,7 +206,17 @@ var payMessageTemplate = template.Must(template.New("pay-message").Parse(`<!doct
     a { display: flex; align-items: center; justify-content: center; min-height: 52px; border-radius: 14px; background: #1683ff; color: #fff; text-decoration: none; font-weight: 700; }
   </style>
 </head>
-<body><main><h1>{{.Title}}</h1><p>{{.Text}}</p><a href="{{.BotURL}}">Вернуться в бот</a></main></body>
+<body>
+<main><h1>{{.Title}}</h1><p>{{.Text}}</p><a href="{{.BotURL}}">Вернуться в бот</a></main>
+{{if .AutoReturn}}
+<script>
+  setTimeout(function () {
+    window.location.href = "{{.BotURL}}";
+    setTimeout(function () { window.close(); }, 1200);
+  }, 1500);
+</script>
+{{end}}
+</body>
 </html>`))
 
 var offerTemplate = template.Must(template.New("offer").Parse(`<!doctype html>
