@@ -381,6 +381,23 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
       text-decoration: none;
     }
     .return.ready { display: flex; }
+    .retry {
+      min-height: 54px;
+      border: 0;
+      border-radius: 14px;
+      background: #1683ff;
+      color: #fff;
+      font: inherit;
+      font-weight: 700;
+      display: none;
+      align-items: center;
+      justify-content: center;
+    }
+    .retry.ready { display: flex; }
+    .overlay.short .bar,
+    .overlay.short .percent {
+      display: none;
+    }
   </style>
 </head>
 <body>
@@ -400,6 +417,7 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
       <div class="bar"><span id="uploadBar"></span></div>
       <div id="uploadPercent" class="percent">0%</div>
       <a id="returnButton" class="return" href="{{.ReturnToBot}}" target="_self">Вернуться в бота</a>
+      <button id="retryButton" class="retry" type="button">Перезаписать</button>
     </div>
   </div>
   <script>
@@ -455,6 +473,7 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
     const modalTitle = document.getElementById("modalTitle");
     const modalText = document.getElementById("modalText");
     const returnButton = document.getElementById("returnButton");
+    const retryButton = document.getElementById("retryButton");
     const maxDuration = 30;
     let stream, recorder, chunks = [], startedAt = 0, tick = 0, drawTick = 0, stopped = false, holding = false, starting = false;
     const chatBg = new Image();
@@ -475,10 +494,12 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
     }
     function showPreparing() {
       overlay.classList.add("open");
+      overlay.classList.remove("short");
       overlay.setAttribute("aria-hidden", "false");
       modalTitle.textContent = "Готовим вашу анкету";
       modalText.textContent = "Загружаем кружок и отправляем предпросмотр в бот.";
       returnButton.classList.remove("ready");
+      retryButton.classList.remove("ready");
       setUploadProgress(0);
     }
     function showReady() {
@@ -487,6 +508,24 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
       setUploadProgress(100);
       returnButton.href = returnToBotURL || "https://max.ru/id550411830268_1_bot";
       returnButton.classList.add("ready");
+      retryButton.classList.remove("ready");
+    }
+    function showTooShort() {
+      overlay.classList.add("open", "short");
+      overlay.setAttribute("aria-hidden", "false");
+      modalTitle.textContent = "Слишком короткая запись";
+      modalText.textContent = "Кружок должен длиться минимум 3 секунды. Попробуйте записать еще раз.";
+      returnButton.classList.remove("ready");
+      retryButton.classList.add("ready");
+      setUploadProgress(0);
+    }
+    function hideOverlayForRetry() {
+      overlay.classList.remove("open", "short");
+      overlay.setAttribute("aria-hidden", "true");
+      retryButton.classList.remove("ready");
+      timer.textContent = "00:00";
+      setProgress(0);
+      setStatus("");
     }
     async function init() {
       if (window.WebApp && WebApp.ready) WebApp.ready();
@@ -669,7 +708,7 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
       if (duration < 3) {
         timer.textContent = "00:00";
         setProgress(0);
-        setStatus("Запись слишком короткая. Запишите минимум 3 секунды.");
+        showTooShort();
         return;
       }
       await uploadBlob(new Blob(chunks, { type: "video/webm" }), duration, "circle.webm");
@@ -747,6 +786,7 @@ var miniRecordTemplate = template.Must(template.New("mini-record").Parse(`<!doct
     button.addEventListener("pointerleave", stop);
     button.addEventListener("touchstart", e => { e.preventDefault(); start(); }, { passive: false });
     button.addEventListener("touchend", e => { e.preventDefault(); stop(); }, { passive: false });
+    retryButton.addEventListener("click", hideOverlayForRetry);
     init();
   </script>
 </body>

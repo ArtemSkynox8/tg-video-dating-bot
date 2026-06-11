@@ -291,7 +291,6 @@ func (s *DatingService) SaveRecordedVideo(ctx context.Context, user models.User,
 	if strings.TrimSpace(user.ProfileLink) == "" && strings.TrimSpace(user.ContactPhone) == "" {
 		return s.max.SendText(ctx, user.PlatformChatID, "✅ Кружок успешно сохранен.\n\nЧтобы другие пользователи могли написать вам после взаимного лайка, добавьте свой контакт MAX.", [][]maxapi.Button{
 			{{Text: "💬 Поделиться своим контактом", Payload: "edit_profile_link"}},
-			{{Text: "▶️ Начать просмотр", Payload: "browse"}},
 		})
 	}
 	return s.max.SendText(ctx, user.PlatformChatID, "✅ Кружок успешно сохранен.", [][]maxapi.Button{{{Text: "▶️ Начать просмотр", Payload: "browse"}}})
@@ -419,6 +418,12 @@ func (s *DatingService) HandleMedia(ctx context.Context, user models.User, media
 	if user.FlowState == models.StateAwaitingRewriteVideo || !expectingVideo {
 		return s.max.SendText(ctx, user.PlatformChatID, "Видео обновлено.", mainMenuButtons())
 	}
+	if !contactComplete(user) {
+		if err := s.repo.SetFlowState(ctx, user.ID, models.StateAwaitingProfileLink); err != nil {
+			return err
+		}
+		return s.max.SendText(ctx, user.PlatformChatID, "✅ Анкета создана.\n\nЧтобы другие пользователи могли написать вам после взаимного лайка, добавьте свой контакт MAX.", contactShareButtons())
+	}
 	return s.max.SendText(ctx, user.PlatformChatID, "✅ Анкета создана. Теперь вы можете смотреть видео других пользователей.", [][]maxapi.Button{
 		{{Text: "▶️ Начать просмотр", Payload: "browse"}},
 	})
@@ -442,6 +447,12 @@ func (s *DatingService) SendNextCandidate(ctx context.Context, user models.User)
 			return s.SendRecordPrompt(ctx, user, "Сначала запишите свой кружок.")
 		}
 		return err
+	}
+	if !contactComplete(user) {
+		if err := s.repo.SetFlowState(ctx, user.ID, models.StateAwaitingProfileLink); err != nil {
+			return err
+		}
+		return s.max.SendText(ctx, user.PlatformChatID, "Чтобы начать просмотр, сначала добавьте свой контакт MAX. Так другие пользователи смогут написать вам после взаимного лайка.", contactShareButtons())
 	}
 	candidate, err := s.repo.FindCandidate(ctx, user.ID)
 	if err != nil {
@@ -720,6 +731,10 @@ func (s *DatingService) isAdmin(user models.User) bool {
 
 func profileComplete(user models.User) bool {
 	return user.Name != "" && user.Gender != "" && user.PreferredGender != ""
+}
+
+func contactComplete(user models.User) bool {
+	return strings.TrimSpace(user.ProfileLink) != "" || strings.TrimSpace(user.ContactPhone) != ""
 }
 
 var nameRe = regexp.MustCompile(`^[\p{L} -]{2,30}$`)
