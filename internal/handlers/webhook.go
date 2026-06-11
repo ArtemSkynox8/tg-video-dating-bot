@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -31,8 +32,14 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	rawBody, readErr := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if readErr != nil {
+		http.Error(w, "bad update", http.StatusBadRequest)
+		return
+	}
+
 	var update maxapi.Update
-	if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
+	if err := json.Unmarshal(rawBody, &update); err != nil {
 		http.Error(w, "bad update", http.StatusBadRequest)
 		return
 	}
@@ -43,8 +50,11 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "message_created":
 		if update.Message != nil {
 			msg := normalizeMessage(update)
-			log.Printf("max update message_created user=%s chat=%s sender=%s recipient_chat=%s recipient_user=%s profile_link=%q attachments=%d media=%d text=%q",
-				msg.From.ID, msg.Chat.ID, update.Message.Sender.ID, update.Message.Recipient.ChatID, update.Message.Recipient.UserID, msg.From.ProfileLink, len(update.Message.Body.Attachments), len(msg.Media), msg.Text)
+			log.Printf("max update message_created user=%s chat=%s sender=%s recipient_chat=%s recipient_user=%s profile_link=%q attachments=%d media=%d contacts=%d text=%q",
+				msg.From.ID, msg.Chat.ID, update.Message.Sender.ID, update.Message.Recipient.ChatID, update.Message.Recipient.UserID, msg.From.ProfileLink, len(update.Message.Body.Attachments), len(msg.Media), len(msg.Contacts), msg.Text)
+			if shouldLogRawMessage(update.Message) {
+				log.Printf("max raw message=%s", limitLog(string(rawBody), 4096))
+			}
 			err = h.service.HandleMessage(ctx, msg)
 		}
 	case "bot_started":
@@ -97,6 +107,7 @@ func normalizeMessage(update maxapi.Update) maxapi.MessageUpdate {
 		From:      from,
 		Text:      message.Body.Text,
 		Media:     normalizeMedia(message.Body.Attachments),
+		Contacts:  normalizeContacts(message.Body.Attachments),
 	}
 }
 
@@ -143,6 +154,21 @@ func normalizeMedia(attachments []maxapi.Attachment) []maxapi.Media {
 	return media
 }
 
+func normalizeContacts(attachments []maxapi.Attachment) []maxapi.Contact {
+	contacts := make([]maxapi.Contact, 0, len(attachments))
+	for _, attachment := range attachments {
+		if attachment.Type != "contact" {
+			continue
+		}
+		contacts = append(contacts, maxapi.Contact{
+			Name:   findPayloadValue(attachment.Payload, []string{"name", "full_name", "fullName", "first_name", "firstName"}),
+			Phone:  findPayloadValue(attachment.Payload, []string{"phone", "phone_number", "phoneNumber", "phone_number_normalized"}),
+			UserID: findPayloadValue(attachment.Payload, []string{"user_id", "userId", "id"}),
+		})
+	}
+	return contacts
+}
+
 func findPayloadValue(value any, keys []string) string {
 	switch item := value.(type) {
 	case map[string]any:
@@ -174,4 +200,26 @@ func parsePayloadInt(value any, keys []string) int {
 		return out / 1000
 	}
 	return out
+}
+
+func shouldLogRawMessage(message *maxapi.Message) bool {
+	if message == nil {
+		return false
+	}
+	if strings.TrimSpace(message.Body.Text) == "" {
+		return true
+	}
+	for _, attachment := range message.Body.Attachments {
+		if attachment.Type == "contact" || attachment.Type == "share" {
+			return true
+		}
+	}
+	return false
+}
+
+func limitLog(value string, limit int) string {
+	if len(value) <= limit {
+		return value
+	}
+	return value[:limit] + "...(truncated)"
 }

@@ -22,6 +22,7 @@ type MessageUpdate struct {
 	From      PlatformUser `json:"from"`
 	Text      string       `json:"text,omitempty"`
 	Media     []Media      `json:"media,omitempty"`
+	Contacts  []Contact    `json:"contacts,omitempty"`
 }
 
 type CallbackUpdate struct {
@@ -71,10 +72,11 @@ type Media struct {
 }
 
 type Button struct {
-	Text    string `json:"text"`
-	Payload string `json:"payload,omitempty"`
-	URL     string `json:"url,omitempty"`
-	OpenApp bool  `json:"open_app,omitempty"`
+	Text           string `json:"text"`
+	Payload        string `json:"payload,omitempty"`
+	URL            string `json:"url,omitempty"`
+	OpenApp        bool   `json:"open_app,omitempty"`
+	RequestContact bool   `json:"request_contact,omitempty"`
 }
 
 type Message struct {
@@ -107,6 +109,12 @@ type MessageBody struct {
 type Attachment struct {
 	Type    string            `json:"type"`
 	Payload map[string]any    `json:"payload,omitempty"`
+}
+
+type Contact struct {
+	Name   string
+	Phone  string
+	UserID string
 }
 
 type CallbackEvent struct {

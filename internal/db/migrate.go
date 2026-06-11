@@ -18,6 +18,7 @@ create table if not exists users (
     platform_chat_id text not null,
     platform_dialog_id text not null default '',
     profile_link text,
+    contact_phone text,
     username text,
     name text,
     gender text,
@@ -32,6 +33,7 @@ create table if not exists users (
 
 alter table users add column if not exists flow_state text not null default '';
 alter table users add column if not exists platform_dialog_id text not null default '';
+alter table users add column if not exists contact_phone text;
 
 create table if not exists videos (
     id bigserial primary key,

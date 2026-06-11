@@ -22,7 +22,7 @@ func New(db *pgxpool.Pool) *Repository {
 
 func (r *Repository) GetUserByPlatformID(ctx context.Context, platformUserID string) (*models.User, error) {
 	row := r.db.QueryRow(ctx, `
-		select id, platform_user_id, platform_chat_id, coalesce(platform_dialog_id, ''), coalesce(profile_link, ''), coalesce(username, ''),
+		select id, platform_user_id, platform_chat_id, coalesce(platform_dialog_id, ''), coalesce(profile_link, ''), coalesce(contact_phone, ''), coalesce(username, ''),
 		       coalesce(name, ''), coalesce(gender, ''), coalesce(preferred_gender, ''), coalesce(flow_state, ''), is_premium,
 		       status, restricted_until, created_at, updated_at
 		from users where platform_user_id = $1`, platformUserID)
@@ -31,7 +31,7 @@ func (r *Repository) GetUserByPlatformID(ctx context.Context, platformUserID str
 
 func (r *Repository) GetUserByID(ctx context.Context, userID int64) (*models.User, error) {
 	row := r.db.QueryRow(ctx, `
-		select id, platform_user_id, platform_chat_id, coalesce(platform_dialog_id, ''), coalesce(profile_link, ''), coalesce(username, ''),
+		select id, platform_user_id, platform_chat_id, coalesce(platform_dialog_id, ''), coalesce(profile_link, ''), coalesce(contact_phone, ''), coalesce(username, ''),
 		       coalesce(name, ''), coalesce(gender, ''), coalesce(preferred_gender, ''), coalesce(flow_state, ''), is_premium,
 		       status, restricted_until, created_at, updated_at
 		from users where id = $1`, userID)
@@ -48,7 +48,7 @@ func (r *Repository) UpsertPlatformUser(ctx context.Context, user models.User) (
 			profile_link = coalesce(excluded.profile_link, users.profile_link),
 			username = coalesce(excluded.username, users.username),
 			updated_at = now()
-		returning id, platform_user_id, platform_chat_id, coalesce(platform_dialog_id, ''), coalesce(profile_link, ''), coalesce(username, ''),
+		returning id, platform_user_id, platform_chat_id, coalesce(platform_dialog_id, ''), coalesce(profile_link, ''), coalesce(contact_phone, ''), coalesce(username, ''),
 		          coalesce(name, ''), coalesce(gender, ''), coalesce(preferred_gender, ''), coalesce(flow_state, ''), is_premium,
 		          status, restricted_until, created_at, updated_at`,
 		user.PlatformUserID, user.PlatformChatID, user.PlatformDialogID, user.ProfileLink, user.Username)
@@ -79,6 +79,11 @@ func (r *Repository) UpdatePreferredGender(ctx context.Context, userID int64, pr
 
 func (r *Repository) UpdateProfileLink(ctx context.Context, userID int64, profileLink string) error {
 	_, err := r.db.Exec(ctx, `update users set profile_link = nullif($2, ''), updated_at = now() where id = $1`, userID, profileLink)
+	return err
+}
+
+func (r *Repository) UpdateContactPhone(ctx context.Context, userID int64, phone string) error {
+	_, err := r.db.Exec(ctx, `update users set contact_phone = nullif($2, ''), updated_at = now() where id = $1`, userID, phone)
 	return err
 }
 
@@ -164,7 +169,7 @@ func (r *Repository) FindCandidate(ctx context.Context, viewerID int64) (*models
 			where u.id <> $1
 		)
 		select v.id, v.user_id, v.platform_media_id, coalesce(v.storage_url, ''), v.duration, v.is_active, v.created_at,
-		       u.id, u.platform_user_id, u.platform_chat_id, coalesce(u.platform_dialog_id, ''), coalesce(u.profile_link, ''), coalesce(u.username, ''),
+		       u.id, u.platform_user_id, u.platform_chat_id, coalesce(u.platform_dialog_id, ''), coalesce(u.profile_link, ''), coalesce(u.contact_phone, ''), coalesce(u.username, ''),
 		       coalesce(u.name, ''), coalesce(u.gender, ''), coalesce(u.preferred_gender, ''), coalesce(u.flow_state, ''), u.is_premium,
 		       u.status, u.restricted_until, u.created_at, u.updated_at
 		from (
@@ -184,7 +189,7 @@ func (r *Repository) FindCandidate(ctx context.Context, viewerID int64) (*models
 	var c models.Candidate
 	if err := row.Scan(
 		&c.ID, &c.UserID, &c.PlatformMediaID, &c.StorageURL, &c.Duration, &c.IsActive, &c.CreatedAt,
-		&c.Owner.ID, &c.Owner.PlatformUserID, &c.Owner.PlatformChatID, &c.Owner.PlatformDialogID, &c.Owner.ProfileLink, &c.Owner.Username,
+		&c.Owner.ID, &c.Owner.PlatformUserID, &c.Owner.PlatformChatID, &c.Owner.PlatformDialogID, &c.Owner.ProfileLink, &c.Owner.ContactPhone, &c.Owner.Username,
 		&c.Owner.Name, &c.Owner.Gender, &c.Owner.PreferredGender, &c.Owner.FlowState, &c.Owner.IsPremium,
 		&c.Owner.Status, &c.Owner.RestrictedUntil, &c.Owner.CreatedAt, &c.Owner.UpdatedAt,
 	); err != nil {
@@ -350,7 +355,7 @@ func (r *Repository) ApplyReportRestrictions(ctx context.Context, reportedUserID
 
 func (r *Repository) ListVisibleMatches(ctx context.Context, userID int64) ([]models.User, error) {
 	rows, err := r.db.Query(ctx, `
-		select u.id, u.platform_user_id, u.platform_chat_id, coalesce(u.platform_dialog_id, ''), coalesce(u.profile_link, ''), coalesce(u.username, ''),
+		select u.id, u.platform_user_id, u.platform_chat_id, coalesce(u.platform_dialog_id, ''), coalesce(u.profile_link, ''), coalesce(u.contact_phone, ''), coalesce(u.username, ''),
 		       coalesce(u.name, ''), coalesce(u.gender, ''), coalesce(u.preferred_gender, ''), coalesce(u.flow_state, ''), u.is_premium,
 		       u.status, u.restricted_until, u.created_at, u.updated_at
 		from matches m
@@ -396,7 +401,7 @@ func (r *Repository) Stats(ctx context.Context) (map[string]int64, error) {
 
 func (r *Repository) ListUsers(ctx context.Context, limit int) ([]models.User, error) {
 	rows, err := r.db.Query(ctx, `
-		select id, platform_user_id, platform_chat_id, coalesce(platform_dialog_id, ''), coalesce(profile_link, ''), coalesce(username, ''),
+		select id, platform_user_id, platform_chat_id, coalesce(platform_dialog_id, ''), coalesce(profile_link, ''), coalesce(contact_phone, ''), coalesce(username, ''),
 		       coalesce(name, ''), coalesce(gender, ''), coalesce(preferred_gender, ''), coalesce(flow_state, ''), is_premium,
 		       status, restricted_until, created_at, updated_at
 		from users
@@ -496,6 +501,7 @@ func (r *Repository) ResetUser(ctx context.Context, userID int64) error {
 	}
 	if _, err := tx.Exec(ctx, `
 		update users set name = null, gender = null, preferred_gender = null,
+			profile_link = null, contact_phone = null,
 			flow_state = '', is_premium = false, status = 'active',
 			restricted_until = null, updated_at = now()
 		where id = $1`, userID); err != nil {
@@ -540,7 +546,7 @@ func (r *Repository) restrictByCounts(ctx context.Context, reportedUserID int64,
 
 func scanUser(row pgx.Row) (*models.User, error) {
 	var u models.User
-	if err := row.Scan(&u.ID, &u.PlatformUserID, &u.PlatformChatID, &u.PlatformDialogID, &u.ProfileLink, &u.Username,
+	if err := row.Scan(&u.ID, &u.PlatformUserID, &u.PlatformChatID, &u.PlatformDialogID, &u.ProfileLink, &u.ContactPhone, &u.Username,
 		&u.Name, &u.Gender, &u.PreferredGender, &u.FlowState, &u.IsPremium, &u.Status, &u.RestrictedUntil,
 		&u.CreatedAt, &u.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

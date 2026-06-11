@@ -8,6 +8,7 @@ type User struct {
 	PlatformChatID string
 	PlatformDialogID string
 	ProfileLink    string
+	ContactPhone   string
 	Username       string
 	Name           string
 	Gender         string

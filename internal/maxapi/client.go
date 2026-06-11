@@ -276,7 +276,12 @@ func inlineKeyboard(buttons [][]Button) []map[string]any {
 				"type": "callback",
 				"text": button.Text,
 			}
-			if button.URL != "" && button.OpenApp {
+			if button.RequestContact {
+				item["type"] = "request_contact"
+				if button.Payload != "" {
+					item["payload"] = button.Payload
+				}
+			} else if button.URL != "" && button.OpenApp {
 				item["type"] = "open_app"
 				item["web_app"] = button.URL
 				item["payload"] = button.Payload

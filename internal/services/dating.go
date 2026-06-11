@@ -77,6 +77,8 @@ func (s *DatingService) HandleMessage(ctx context.Context, msg maxapi.MessageUpd
 		return s.SendMatches(ctx, *user)
 	case text == "▶️ Начать просмотр":
 		return s.SendNextCandidate(ctx, *user)
+	case len(msg.Contacts) > 0:
+		return s.SaveContactPhone(ctx, *user, msg.Contacts[0])
 	case len(msg.Media) > 0:
 		return s.HandleMedia(ctx, *user, msg.Media[0])
 	case user.FlowState == models.StateAwaitingName:
@@ -182,7 +184,7 @@ func (s *DatingService) HandleCallback(ctx context.Context, cb maxapi.CallbackUp
 		if err := s.repo.SetFlowState(ctx, user.ID, models.StateAwaitingProfileLink); err != nil {
 			return err
 		}
-		return s.max.SendText(ctx, cb.Chat.ID, "Поделитесь своим контактом, чтобы другие пользователи могли написать вам после взаимного лайка.\n\nОтправьте ссылку MAX вида:\nhttps://max.ru/u/...\n\nЕё можно получить через «Поделиться» в своём профиле.", nil)
+		return s.max.SendText(ctx, cb.Chat.ID, "Поделитесь своим контактом MAX, чтобы другие пользователи могли связаться с вами после взаимного лайка.\n\nНажмите кнопку ниже или отправьте ссылку MAX вида:\nhttps://max.ru/u/...", contactShareButtons())
 	case "main_menu":
 		return s.max.SendText(ctx, cb.Chat.ID, "Главное меню:", mainMenuButtons())
 	case "premium":
@@ -283,7 +285,7 @@ func (s *DatingService) SaveRecordedVideo(ctx context.Context, user models.User,
 	if err := s.repo.ClearFlowState(ctx, user.ID); err != nil {
 		return err
 	}
-	if strings.TrimSpace(user.ProfileLink) == "" {
+	if strings.TrimSpace(user.ProfileLink) == "" && strings.TrimSpace(user.ContactPhone) == "" {
 		return s.max.SendText(ctx, user.PlatformChatID, "✅ Кружок успешно сохранен.\n\nЧтобы другие пользователи могли написать вам после взаимного лайка, добавьте свой контакт MAX.", [][]maxapi.Button{
 			{{Text: "💬 Поделиться своим контактом", Payload: "edit_profile_link"}},
 			{{Text: "▶️ Начать просмотр", Payload: "browse"}},
@@ -330,6 +332,23 @@ func (s *DatingService) SaveProfileLink(ctx context.Context, user models.User, l
 		return err
 	}
 	return s.max.SendText(ctx, user.PlatformChatID, "Ссылка MAX сохранена. Теперь при взаимном лайке или Premium-контакте кнопка «Написать» будет открывать личные сообщения.", [][]maxapi.Button{
+		{{Text: "▶️ Начать просмотр", Payload: "browse"}},
+		{{Text: "☰ Главное меню", Payload: "main_menu"}},
+	})
+}
+
+func (s *DatingService) SaveContactPhone(ctx context.Context, user models.User, contact maxapi.Contact) error {
+	phone := strings.TrimSpace(contact.Phone)
+	if phone == "" {
+		return s.max.SendText(ctx, user.PlatformChatID, "MAX отправил контакт без номера. Попробуйте отправить ссылку вида:\nhttps://max.ru/u/...", contactShareButtons())
+	}
+	if err := s.repo.UpdateContactPhone(ctx, user.ID, phone); err != nil {
+		return err
+	}
+	if err := s.repo.ClearFlowState(ctx, user.ID); err != nil {
+		return err
+	}
+	return s.max.SendText(ctx, user.PlatformChatID, "Контакт MAX сохранен. Если хотите, можете дополнительно отправить ссылку https://max.ru/u/... - тогда кнопка «Написать» будет открывать личные сообщения напрямую.", [][]maxapi.Button{
 		{{Text: "▶️ Начать просмотр", Payload: "browse"}},
 		{{Text: "☰ Главное меню", Payload: "main_menu"}},
 	})
@@ -463,12 +482,12 @@ func (s *DatingService) HandleBrowseAction(ctx context.Context, user models.User
 			if err := s.repo.CreateMatch(ctx, user.ID, ownerID); err != nil {
 				return err
 			}
-			if err := s.max.SendText(ctx, owner.PlatformChatID, "❤️ У вас новый взаимный лайк!\n\n"+contactLine(user), contactButtons(user, true)); err != nil {
+			if err := s.max.SendText(ctx, owner.PlatformChatID, "❤️ У вас новый взаимный лайк!\n\n"+contactLineWithPhone(user), contactButtons(user, true)); err != nil {
 				return err
 			}
-			return s.max.SendText(ctx, chatID, "❤️ У вас новый взаимный лайк!\n\n"+contactLine(*owner), contactButtons(*owner, true))
+			return s.max.SendText(ctx, chatID, "❤️ У вас новый взаимный лайк!\n\n"+contactLineWithPhone(*owner), contactButtons(*owner, true))
 		}
-		return s.max.SendText(ctx, chatID, "💎 Premium: контакт открыт без взаимного лайка.\n\n"+contactLine(*owner), contactButtons(*owner, false))
+		return s.max.SendText(ctx, chatID, "💎 Premium: контакт открыт без взаимного лайка.\n\n"+contactLineWithPhone(*owner), contactButtons(*owner, false))
 	}
 	return s.SendNextCandidate(ctx, user)
 }
@@ -502,12 +521,20 @@ func (s *DatingService) SendMatches(ctx context.Context, user models.User) error
 	lines := []string{"📬 Взаимные лайки:"}
 	buttons := [][]maxapi.Button{}
 	for _, u := range users {
-		lines = append(lines, contactLine(u))
-		buttons = append(buttons, []maxapi.Button{
-			{Text: "💬 " + shortName(u.Name), URL: profileURL(u)},
-			{Text: "🎥 Видео", Payload: fmt.Sprintf("match_video:%d", u.ID)},
-			{Text: "🗑 Удалить", Payload: fmt.Sprintf("hide_match:%d", u.ID)},
-		})
+		lines = append(lines, contactLineWithPhone(u))
+		row := []maxapi.Button{}
+		if url := profileURL(u); url != "" {
+			row = append(row, maxapi.Button{Text: "💬 " + shortName(u.Name), URL: url})
+		} else if strings.TrimSpace(u.ContactPhone) != "" {
+			row = append(row, maxapi.Button{Text: "☎️ " + shortName(u.Name), Payload: "main_menu"})
+		} else {
+			row = append(row, maxapi.Button{Text: "💬 Нет ссылки", Payload: "missing_profile_link"})
+		}
+		row = append(row,
+			maxapi.Button{Text: "🎥 Видео", Payload: fmt.Sprintf("match_video:%d", u.ID)},
+			maxapi.Button{Text: "🗑 Удалить", Payload: fmt.Sprintf("hide_match:%d", u.ID)},
+		)
+		buttons = append(buttons, row)
 	}
 	return s.max.SendText(ctx, user.PlatformChatID, strings.Join(lines, "\n"), buttons)
 }
@@ -749,6 +776,14 @@ func contactLine(user models.User) string {
 	return "Контакт: " + displayName(user)
 }
 
+func contactLineWithPhone(user models.User) string {
+	line := "Контакт: " + displayName(user)
+	if strings.TrimSpace(user.ContactPhone) != "" {
+		line += "\nMAX телефон: " + strings.TrimSpace(user.ContactPhone)
+	}
+	return line
+}
+
 func profileURL(user models.User) string {
 	if user.ProfileLink != "" {
 		return normalizeProfileURL(user.ProfileLink)
@@ -782,6 +817,8 @@ func contactButtons(user models.User, includeMatches bool) [][]maxapi.Button {
 	buttons := [][]maxapi.Button{}
 	if url := profileURL(user); url != "" {
 		buttons = append(buttons, []maxapi.Button{{Text: "💬 Написать " + shortName(user.Name), URL: url}})
+	} else if strings.TrimSpace(user.ContactPhone) != "" {
+		buttons = append(buttons, []maxapi.Button{{Text: "☎️ Контакт: " + strings.TrimSpace(user.ContactPhone), Payload: "main_menu"}})
 	} else {
 		buttons = append(buttons, []maxapi.Button{{Text: "💬 Ссылка профиля недоступна", Payload: "missing_profile_link"}})
 	}
@@ -843,6 +880,13 @@ func editDataButtons() [][]maxapi.Button {
 		{{Text: "Пол", Payload: "edit_gender"}},
 		{{Text: "Кого смотреть", Payload: "edit_preferred"}},
 		{{Text: "💬 Поделиться своим контактом", Payload: "edit_profile_link"}},
+		{{Text: "☰ Главное меню", Payload: "main_menu"}},
+	}
+}
+
+func contactShareButtons() [][]maxapi.Button {
+	return [][]maxapi.Button{
+		{{Text: "📱 Поделиться контактом MAX", RequestContact: true, Payload: "share_contact"}},
 		{{Text: "☰ Главное меню", Payload: "main_menu"}},
 	}
 }
