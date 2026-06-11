@@ -43,8 +43,8 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "message_created":
 		if update.Message != nil {
 			msg := normalizeMessage(update)
-			log.Printf("max update message_created user=%s chat=%s sender=%s recipient_chat=%s recipient_user=%s attachments=%d media=%d text=%q",
-				msg.From.ID, msg.Chat.ID, update.Message.Sender.ID, update.Message.Recipient.ChatID, update.Message.Recipient.UserID, len(update.Message.Body.Attachments), len(msg.Media), msg.Text)
+			log.Printf("max update message_created user=%s chat=%s sender=%s recipient_chat=%s recipient_user=%s profile_link=%q attachments=%d media=%d text=%q",
+				msg.From.ID, msg.Chat.ID, update.Message.Sender.ID, update.Message.Recipient.ChatID, update.Message.Recipient.UserID, msg.From.ProfileLink, len(update.Message.Body.Attachments), len(msg.Media), msg.Text)
 			err = h.service.HandleMessage(ctx, msg)
 		}
 	case "bot_started":
@@ -59,8 +59,8 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "message_callback":
 		if update.Callback != nil {
 			cb := normalizeCallback(update)
-			log.Printf("max update message_callback user=%s chat=%s payload=%q callback_user=%s recipient_chat=%s recipient_user=%s",
-				cb.From.ID, cb.Chat.ID, cb.Payload, update.Callback.User.ID, update.Callback.Message.Recipient.ChatID, update.Callback.Message.Recipient.UserID)
+			log.Printf("max update message_callback user=%s chat=%s payload=%q callback_user=%s recipient_chat=%s recipient_user=%s profile_link=%q",
+				cb.From.ID, cb.Chat.ID, cb.Payload, update.Callback.User.ID, update.Callback.Message.Recipient.ChatID, update.Callback.Message.Recipient.UserID, cb.From.ProfileLink)
 			err = h.service.HandleCallback(ctx, cb)
 		}
 	default:

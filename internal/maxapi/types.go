@@ -52,7 +52,7 @@ func (u *PlatformUser) UnmarshalJSON(data []byte) error {
 		u.ID = valueToString(raw["id"])
 	}
 	u.Username = valueToString(raw["username"])
-	u.ProfileLink = valueToString(raw["profile_link"])
+	u.ProfileLink = firstString(raw, []string{"profile_link", "profileLink", "link", "url", "share_link", "shareLink", "public_link", "publicLink"})
 	u.Name = valueToString(raw["name"])
 	u.FirstName = valueToString(raw["first_name"])
 	u.LastName = valueToString(raw["last_name"])
@@ -127,4 +127,22 @@ func valueToString(value any) string {
 	default:
 		return fmt.Sprint(v)
 	}
+}
+
+func firstString(values map[string]any, keys []string) string {
+	for _, key := range keys {
+		if value := valueToString(values[key]); value != "" {
+			return value
+		}
+	}
+	for _, key := range keys {
+		nested, ok := values[key].(map[string]any)
+		if !ok {
+			continue
+		}
+		if value := firstString(nested, keys); value != "" {
+			return value
+		}
+	}
+	return ""
 }

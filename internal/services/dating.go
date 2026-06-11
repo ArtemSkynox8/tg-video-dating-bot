@@ -178,6 +178,8 @@ func (s *DatingService) HandleCallback(ctx context.Context, cb maxapi.CallbackUp
 		return s.max.SendText(ctx, cb.Chat.ID, "Главное меню:", mainMenuButtons())
 	case "premium":
 		return s.SendPremiumOffer(ctx, *user)
+	case "missing_profile_link":
+		return s.max.SendText(ctx, cb.Chat.ID, "MAX не передал публичную ссылку профиля этого пользователя. Попросите его открыть бота заново через /start, после этого ссылка для личных сообщений обновится.", mainMenuButtons())
 	case "menu_report":
 		return s.SendReportableMatches(ctx, *user)
 	case "report_user":
@@ -713,14 +715,34 @@ func contactLine(user models.User) string {
 
 func profileURL(user models.User) string {
 	if user.ProfileLink != "" {
-		return user.ProfileLink
+		return normalizeProfileURL(user.ProfileLink)
 	}
-	return "https://max.ru/id" + user.PlatformUserID
+	return ""
+}
+
+func normalizeProfileURL(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "https://") {
+		return value
+	}
+	if strings.HasPrefix(value, "u/") {
+		return "https://max.ru/" + value
+	}
+	if strings.HasPrefix(value, "@") {
+		return "https://max.ru/" + strings.TrimPrefix(value, "@")
+	}
+	return value
 }
 
 func contactButtons(user models.User, includeMatches bool) [][]maxapi.Button {
-	buttons := [][]maxapi.Button{
-		{{Text: "💬 Написать " + shortName(user.Name), URL: profileURL(user)}},
+	buttons := [][]maxapi.Button{}
+	if url := profileURL(user); url != "" {
+		buttons = append(buttons, []maxapi.Button{{Text: "💬 Написать " + shortName(user.Name), URL: url}})
+	} else {
+		buttons = append(buttons, []maxapi.Button{{Text: "💬 Ссылка профиля недоступна", Payload: "missing_profile_link"}})
 	}
 	if includeMatches {
 		buttons = append(buttons, []maxapi.Button{{Text: "📬 Взаимные лайки", Payload: "matches"}})
