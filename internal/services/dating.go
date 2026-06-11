@@ -18,10 +18,11 @@ type DatingService struct {
 	max      *maxapi.Client
 	adminIDs []string
 	publicBaseURL string
+	premiumPrice string
 }
 
-func NewDatingService(repo *repositories.Repository, max *maxapi.Client, adminIDs []string, publicBaseURL string) *DatingService {
-	return &DatingService{repo: repo, max: max, adminIDs: adminIDs, publicBaseURL: strings.TrimRight(publicBaseURL, "/")}
+func NewDatingService(repo *repositories.Repository, max *maxapi.Client, adminIDs []string, publicBaseURL, premiumPrice string) *DatingService {
+	return &DatingService{repo: repo, max: max, adminIDs: adminIDs, publicBaseURL: strings.TrimRight(publicBaseURL, "/"), premiumPrice: premiumPrice}
 }
 
 func (s *DatingService) HandleMessage(ctx context.Context, msg maxapi.MessageUpdate) error {
@@ -239,10 +240,12 @@ func (s *DatingService) SendPremiumOffer(ctx context.Context, user models.User) 
 	}
 	offerURL := s.publicBaseURL + "/offer"
 	text := "💎 Premium доступ\n\n" +
+		"Стоимость: " + s.premiumPriceText() + ".\n\n" +
 		"Что входит:\n" +
+		"• доступ к контактам пользователей;\n" +
 		"• возможность писать первым без взаимного лайка;\n" +
 		"• неограниченный просмотр кружков.\n\n" +
-		"Нажимая кнопку оплаты, вы соглашаетесь с условиями оферты:\n" + offerURL
+		"Нажимая кнопку оплаты, вы соглашаетесь с условиями оферты."
 	return s.max.SendText(ctx, user.PlatformChatID, text, [][]maxapi.Button{
 		{{Text: "💎 Оплатить Premium доступ", URL: s.premiumPaymentURL(user)}},
 		{{Text: "▶️ Продолжить просмотр", Payload: "browse"}},
@@ -901,6 +904,18 @@ func (s *DatingService) recordURL(user models.User) string {
 
 func (s *DatingService) premiumPaymentURL(user models.User) string {
 	return s.publicBaseURL + "/pay?u=" + user.PlatformUserID
+}
+
+func (s *DatingService) premiumPriceText() string {
+	price := strings.TrimSpace(s.premiumPrice)
+	if price == "" {
+		return "199 ₽"
+	}
+	price = strings.TrimSuffix(price, ".00")
+	if strings.Contains(price, "₽") || strings.Contains(strings.ToLower(price), "руб") {
+		return price
+	}
+	return price + " ₽"
 }
 
 func mainMenuButtons() [][]maxapi.Button {
