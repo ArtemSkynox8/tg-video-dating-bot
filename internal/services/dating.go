@@ -156,6 +156,10 @@ func (s *DatingService) HandleCallback(ctx context.Context, cb maxapi.CallbackUp
 		if len(parts) == 2 {
 			return s.SendMatchVideo(ctx, *user, parseID(parts[1]))
 		}
+	case "match_contact":
+		if len(parts) == 2 {
+			return s.SendMatchContactCard(ctx, *user, parseID(parts[1]))
+		}
 	case "hide_match":
 		if len(parts) == 2 {
 			return s.HideMatch(ctx, *user, parseID(parts[1]))
@@ -505,14 +509,24 @@ func (s *DatingService) HandleBrowseAction(ctx context.Context, user models.User
 			if err := s.repo.CreateMatch(ctx, user.ID, ownerID); err != nil {
 				return err
 			}
-			if err := s.max.SendText(ctx, owner.PlatformChatID, "❤️ У вас новый взаимный лайк!\n\n"+contactLineWithPhone(user), contactButtons(user, true)); err != nil {
+			if err := s.sendContactAccess(ctx, owner.PlatformChatID, "❤️ У вас новый взаимный лайк!", user, true); err != nil {
 				return err
 			}
-			return s.max.SendText(ctx, chatID, "❤️ У вас новый взаимный лайк!\n\n"+contactLineWithPhone(*owner), contactButtons(*owner, true))
+			return s.sendContactAccess(ctx, chatID, "❤️ У вас новый взаимный лайк!", *owner, true)
 		}
-		return s.max.SendText(ctx, chatID, "💎 Premium: контакт открыт без взаимного лайка.\n\n"+contactLineWithPhone(*owner), contactButtons(*owner, false))
+		return s.sendContactAccess(ctx, chatID, "💎 Premium: контакт открыт без взаимного лайка.", *owner, false)
 	}
 	return s.SendNextCandidate(ctx, user)
+}
+
+func (s *DatingService) sendContactAccess(ctx context.Context, recipientID, title string, target models.User, includeMatches bool) error {
+	if err := s.max.SendText(ctx, recipientID, title+"\n\n"+contactLineWithPhone(target), contactButtons(target, includeMatches)); err != nil {
+		return err
+	}
+	if profileURL(target) == "" && strings.TrimSpace(target.ContactPhone) != "" {
+		return s.max.SendContactCard(ctx, recipientID, displayName(target), target.ContactPhone)
+	}
+	return nil
 }
 
 func (s *DatingService) HandleVideoReport(ctx context.Context, user models.User, chatID, messageID, videoIDText, ownerIDText, reason string) error {
@@ -548,6 +562,8 @@ func (s *DatingService) SendMatches(ctx context.Context, user models.User) error
 		row := []maxapi.Button{}
 		if url := profileURL(u); url != "" {
 			row = append(row, maxapi.Button{Text: "💬 " + shortName(u.Name), URL: url})
+		} else if strings.TrimSpace(u.ContactPhone) != "" {
+			row = append(row, maxapi.Button{Text: "📇 Контакт", Payload: fmt.Sprintf("match_contact:%d", u.ID)})
 		} else if strings.TrimSpace(u.ContactPhone) == "" {
 			row = append(row, maxapi.Button{Text: "💬 Нет ссылки", Payload: "missing_profile_link"})
 		}
@@ -583,6 +599,23 @@ func (s *DatingService) SendMatchVideo(ctx context.Context, user models.User, ot
 		_ = s.max.DeleteMessage(context.Background(), chatID, mid)
 	}(user.PlatformChatID, messageID)
 	return nil
+}
+
+func (s *DatingService) SendMatchContactCard(ctx context.Context, user models.User, otherUserID int64) error {
+	if otherUserID == 0 {
+		return nil
+	}
+	if _, err := s.repo.FindVisibleMatch(ctx, user.ID, otherUserID); err != nil {
+		return s.max.SendText(ctx, user.PlatformChatID, "Этот контакт недоступен.", mainMenuButtons())
+	}
+	other, err := s.repo.GetUserByID(ctx, otherUserID)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(other.ContactPhone) == "" {
+		return s.max.SendText(ctx, user.PlatformChatID, "У этого контакта нет сохраненного телефона.", mainMenuButtons())
+	}
+	return s.max.SendContactCard(ctx, user.PlatformChatID, displayName(*other), other.ContactPhone)
 }
 
 func (s *DatingService) HideMatch(ctx context.Context, user models.User, otherUserID int64) error {

@@ -40,6 +40,19 @@ func (c *Client) SendText(ctx context.Context, userID, text string, buttons [][]
 	return c.post(ctx, "/messages?user_id="+url.QueryEscape(userID), body, nil)
 }
 
+func (c *Client) SendContactCard(ctx context.Context, userID, name, phone string) error {
+	vcard := "BEGIN:VCARD\nVERSION:3.0\nFN:" + cleanVCardValue(name) + "\nTEL;TYPE=CELL:" + cleanVCardValue(phone) + "\nEND:VCARD"
+	body := map[string]any{
+		"attachments": []map[string]any{{
+			"type": "contact",
+			"payload": map[string]any{
+				"vcf_info": vcard,
+			},
+		}},
+	}
+	return c.post(ctx, "/messages?user_id="+url.QueryEscape(userID), body, nil)
+}
+
 func (c *Client) SendContactCardTests(ctx context.Context, userID, name, phone string) []string {
 	path := "/messages?user_id=" + url.QueryEscape(userID)
 	vcard := "BEGIN:VCARD\nVERSION:3.0\nFN:" + name + "\nTEL;TYPE=CELL:" + phone + "\nEND:VCARD"
@@ -95,6 +108,10 @@ func (c *Client) SendContactCardTests(ctx context.Context, userID, name, phone s
 		results = append(results, test.name+": OK")
 	}
 	return results
+}
+
+func cleanVCardValue(value string) string {
+	return strings.NewReplacer("\r", " ", "\n", " ").Replace(strings.TrimSpace(value))
 }
 
 func (c *Client) SendMedia(ctx context.Context, userID, mediaID, caption string, buttons [][]Button) (string, error) {
