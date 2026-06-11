@@ -290,7 +290,7 @@ func (s *DatingService) SaveRecordedVideo(ctx context.Context, user models.User,
 	}
 	if strings.TrimSpace(user.ProfileLink) == "" && strings.TrimSpace(user.ContactPhone) == "" {
 		return s.max.SendText(ctx, user.PlatformChatID, "✅ Кружок успешно сохранен.\n\nЧтобы другие пользователи могли написать вам после взаимного лайка, добавьте свой контакт MAX.", [][]maxapi.Button{
-			{{Text: "💬 Поделиться своим контактом", Payload: "edit_profile_link"}},
+			{{Text: "📱 Поделиться контактом MAX", RequestContact: true, Payload: "share_contact"}},
 		})
 	}
 	return s.max.SendText(ctx, user.PlatformChatID, "✅ Кружок успешно сохранен.", [][]maxapi.Button{{{Text: "▶️ Начать просмотр", Payload: "browse"}}})
@@ -539,9 +539,7 @@ func (s *DatingService) SendMatches(ctx context.Context, user models.User) error
 		row := []maxapi.Button{}
 		if url := profileURL(u); url != "" {
 			row = append(row, maxapi.Button{Text: "💬 " + shortName(u.Name), URL: url})
-		} else if strings.TrimSpace(u.ContactPhone) != "" {
-			row = append(row, maxapi.Button{Text: "☎️ " + shortName(u.Name), Payload: "main_menu"})
-		} else {
+		} else if strings.TrimSpace(u.ContactPhone) == "" {
 			row = append(row, maxapi.Button{Text: "💬 Нет ссылки", Payload: "missing_profile_link"})
 		}
 		row = append(row,
@@ -835,9 +833,7 @@ func contactButtons(user models.User, includeMatches bool) [][]maxapi.Button {
 	buttons := [][]maxapi.Button{}
 	if url := profileURL(user); url != "" {
 		buttons = append(buttons, []maxapi.Button{{Text: "💬 Написать " + shortName(user.Name), URL: url}})
-	} else if strings.TrimSpace(user.ContactPhone) != "" {
-		buttons = append(buttons, []maxapi.Button{{Text: "☎️ Контакт: " + strings.TrimSpace(user.ContactPhone), Payload: "main_menu"}})
-	} else {
+	} else if strings.TrimSpace(user.ContactPhone) == "" {
 		buttons = append(buttons, []maxapi.Button{{Text: "💬 Ссылка профиля недоступна", Payload: "missing_profile_link"}})
 	}
 	if includeMatches {
@@ -897,7 +893,7 @@ func editDataButtons() [][]maxapi.Button {
 		{{Text: "Имя", Payload: "edit_name"}},
 		{{Text: "Пол", Payload: "edit_gender"}},
 		{{Text: "Кого смотреть", Payload: "edit_preferred"}},
-		{{Text: "💬 Поделиться своим контактом", Payload: "edit_profile_link"}},
+		{{Text: "📱 Поделиться контактом MAX", RequestContact: true, Payload: "share_contact"}},
 		{{Text: "☰ Главное меню", Payload: "main_menu"}},
 	}
 }
