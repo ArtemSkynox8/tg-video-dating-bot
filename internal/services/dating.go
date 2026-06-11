@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ArtemSkynox8/tg-video-dating-bot/internal/maxapi"
@@ -20,10 +21,12 @@ type DatingService struct {
 	adminIDs []string
 	publicBaseURL string
 	premiumPrice string
+	forwards map[string]maxapi.ForwardInfo
+	forwardsMu sync.RWMutex
 }
 
 func NewDatingService(repo *repositories.Repository, max *maxapi.Client, adminIDs []string, publicBaseURL, premiumPrice string) *DatingService {
-	return &DatingService{repo: repo, max: max, adminIDs: adminIDs, publicBaseURL: strings.TrimRight(publicBaseURL, "/"), premiumPrice: premiumPrice}
+	return &DatingService{repo: repo, max: max, adminIDs: adminIDs, publicBaseURL: strings.TrimRight(publicBaseURL, "/"), premiumPrice: premiumPrice, forwards: map[string]maxapi.ForwardInfo{}}
 }
 
 func (s *DatingService) HandleMessage(ctx context.Context, msg maxapi.MessageUpdate) error {
@@ -39,6 +42,12 @@ func (s *DatingService) HandleMessage(ctx context.Context, msg maxapi.MessageUpd
 	}
 
 	text := strings.TrimSpace(msg.Text)
+	if msg.Forward != nil {
+		s.saveForward(msg.From.ID, *msg.Forward)
+		if text == "" {
+			return s.max.SendText(ctx, user.PlatformChatID, "Пересланное сообщение сохранено для теста.", mainMenuButtons())
+		}
+	}
 	switch {
 	case text == "/start":
 		return s.Start(ctx, *user)
@@ -81,6 +90,8 @@ func (s *DatingService) HandleMessage(ctx context.Context, msg maxapi.MessageUpd
 		return s.SendAdminPhoneLinkTextTest(ctx, *user, strings.TrimSpace(strings.TrimPrefix(text, "/admin_phone_link_text ")))
 	case strings.HasPrefix(text, "/admin_send_contact ") && s.isAdmin(*user):
 		return s.SendAdminContactCardTest(ctx, *user, strings.TrimSpace(strings.TrimPrefix(text, "/admin_send_contact ")))
+	case strings.HasPrefix(text, "/admin_send_forward ") && s.isAdmin(*user):
+		return s.SendAdminForwardTest(ctx, *user, strings.TrimSpace(strings.TrimPrefix(text, "/admin_send_forward ")))
 	case strings.HasPrefix(text, "/user ") && s.isAdmin(*user):
 		return s.SendUserCard(ctx, *user, strings.TrimSpace(strings.TrimPrefix(text, "/user ")))
 	case strings.HasPrefix(text, "📬 Взаимные лайки"):
@@ -669,6 +680,7 @@ func (s *DatingService) SendAdminPanel(ctx context.Context, user models.User) er
 		"/admin_deeplink_text platform_user_id - тест ссылок текстом",
 		"/admin_phone_link_text phone - тест ссылок по телефону",
 		"/admin_send_contact phone name - тест contact card",
+		"/admin_send_forward user_id - тест пересланного сообщения",
 		"/tester_reset_me - очистить свой профиль",
 		"/admin_reset_store confirm - полностью очистить базу бота",
 		"",
@@ -801,6 +813,35 @@ func (s *DatingService) SendAdminContactCardTest(ctx context.Context, admin mode
 	}
 	results := s.max.SendContactCardTests(ctx, admin.PlatformChatID, name, phone)
 	return s.max.SendText(ctx, admin.PlatformChatID, "Результат теста contact card:\n"+strings.Join(results, "\n"), nil)
+}
+
+func (s *DatingService) SendAdminForwardTest(ctx context.Context, admin models.User, platformUserID string) error {
+	platformUserID = strings.TrimSpace(platformUserID)
+	if platformUserID == "" {
+		return s.max.SendText(ctx, admin.PlatformChatID, "Укажите user_id пользователя, который переслал сообщение:\n/admin_send_forward 4533898", nil)
+	}
+	forward, ok := s.getForward(platformUserID)
+	if !ok {
+		return s.max.SendText(ctx, admin.PlatformChatID, "Для этого user_id нет сохраненного пересланного сообщения. Сначала попросите пользователя переслать любое свое сообщение боту.", nil)
+	}
+	results := s.max.SendForwardTests(ctx, admin.PlatformChatID, forward)
+	return s.max.SendText(ctx, admin.PlatformChatID, "Результат теста forward:\n"+strings.Join(results, "\n"), nil)
+}
+
+func (s *DatingService) saveForward(platformUserID string, forward maxapi.ForwardInfo) {
+	if platformUserID == "" {
+		return
+	}
+	s.forwardsMu.Lock()
+	defer s.forwardsMu.Unlock()
+	s.forwards[platformUserID] = forward
+}
+
+func (s *DatingService) getForward(platformUserID string) (maxapi.ForwardInfo, bool) {
+	s.forwardsMu.RLock()
+	defer s.forwardsMu.RUnlock()
+	forward, ok := s.forwards[platformUserID]
+	return forward, ok
 }
 
 func (s *DatingService) HandleAdmin(ctx context.Context, user models.User, parts []string) error {

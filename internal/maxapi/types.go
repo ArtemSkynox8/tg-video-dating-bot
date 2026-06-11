@@ -23,6 +23,7 @@ type MessageUpdate struct {
 	Text      string       `json:"text,omitempty"`
 	Media     []Media      `json:"media,omitempty"`
 	Contacts  []Contact    `json:"contacts,omitempty"`
+	Forward   *ForwardInfo `json:"forward,omitempty"`
 }
 
 type CallbackUpdate struct {
@@ -83,6 +84,7 @@ type Message struct {
 	Sender    PlatformUser `json:"sender"`
 	Recipient Recipient   `json:"recipient"`
 	Body      MessageBody `json:"body"`
+	Link      *MessageLink `json:"link,omitempty"`
 }
 
 type Recipient struct {
@@ -102,6 +104,7 @@ func (r *Recipient) UnmarshalJSON(data []byte) error {
 
 type MessageBody struct {
 	MID         string       `json:"mid,omitempty"`
+	Seq         json.Number  `json:"seq,omitempty"`
 	Text        string       `json:"text,omitempty"`
 	Attachments []Attachment `json:"attachments,omitempty"`
 }
@@ -115,6 +118,22 @@ type Contact struct {
 	Name   string
 	Phone  string
 	UserID string
+}
+
+type MessageLink struct {
+	Type    string       `json:"type,omitempty"`
+	Message *MessageBody `json:"message,omitempty"`
+	Sender  PlatformUser `json:"sender,omitempty"`
+	ChatID  any          `json:"chat_id,omitempty"`
+}
+
+type ForwardInfo struct {
+	MID        string
+	Seq        string
+	Text       string
+	SenderID   string
+	SenderName string
+	ChatID     string
 }
 
 type CallbackEvent struct {

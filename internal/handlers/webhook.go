@@ -108,7 +108,31 @@ func normalizeMessage(update maxapi.Update) maxapi.MessageUpdate {
 		Text:      message.Body.Text,
 		Media:     normalizeMedia(message.Body.Attachments),
 		Contacts:  normalizeContacts(message.Body.Attachments),
+		Forward:   normalizeForward(message.Link),
 	}
+}
+
+func normalizeForward(link *maxapi.MessageLink) *maxapi.ForwardInfo {
+	if link == nil || link.Type != "forward" {
+		return nil
+	}
+	info := &maxapi.ForwardInfo{
+		SenderID:   link.Sender.ID,
+		SenderName: link.Sender.Name,
+		ChatID:     fmt.Sprint(link.ChatID),
+	}
+	if link.Message != nil {
+		info.MID = link.Message.MID
+		info.Seq = link.Message.Seq.String()
+		info.Text = link.Message.Text
+	}
+	if info.SenderName == "" {
+		info.SenderName = strings.TrimSpace(link.Sender.FirstName + " " + link.Sender.LastName)
+	}
+	if info.MID == "" && info.SenderID == "" && info.Text == "" {
+		return nil
+	}
+	return info
 }
 
 func normalizeCallback(update maxapi.Update) maxapi.CallbackUpdate {

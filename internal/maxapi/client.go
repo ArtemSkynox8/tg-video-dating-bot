@@ -110,6 +110,78 @@ func (c *Client) SendContactCardTests(ctx context.Context, userID, name, phone s
 	return results
 }
 
+func (c *Client) SendForwardTests(ctx context.Context, userID string, forward ForwardInfo) []string {
+	path := "/messages?user_id=" + url.QueryEscape(userID)
+	messagePayload := map[string]any{
+		"mid":  forward.MID,
+		"text": forward.Text,
+	}
+	if forward.Seq != "" {
+		messagePayload["seq"] = forward.Seq
+	}
+	senderPayload := map[string]any{
+		"user_id": forward.SenderID,
+		"name":    forward.SenderName,
+	}
+	linkPayload := map[string]any{
+		"type":    "forward",
+		"message": messagePayload,
+		"sender":  senderPayload,
+		"chat_id": forward.ChatID,
+	}
+	tests := []struct {
+		name string
+		body map[string]any
+	}{
+		{
+			name: "top_level_link",
+			body: map[string]any{
+				"text": "Тест forward: top_level_link",
+				"link": linkPayload,
+			},
+		},
+		{
+			name: "attachment_forward_payload",
+			body: map[string]any{
+				"text": "Тест forward: attachment forward",
+				"attachments": []map[string]any{{
+					"type":    "forward",
+					"payload": linkPayload,
+				}},
+			},
+		},
+		{
+			name: "attachment_share_payload",
+			body: map[string]any{
+				"text": "Тест forward: attachment share",
+				"attachments": []map[string]any{{
+					"type":    "share",
+					"payload": linkPayload,
+				}},
+			},
+		},
+		{
+			name: "attachment_link_forward",
+			body: map[string]any{
+				"text": "Тест forward: attachment link",
+				"attachments": []map[string]any{{
+					"type":    "link",
+					"payload": linkPayload,
+				}},
+			},
+		},
+	}
+	results := make([]string, 0, len(tests))
+	for _, test := range tests {
+		if err := c.post(ctx, path, test.body, nil); err != nil {
+			results = append(results, test.name+": "+err.Error())
+			continue
+		}
+		results = append(results, test.name+": OK")
+	}
+	return results
+}
+
 func cleanVCardValue(value string) string {
 	return strings.NewReplacer("\r", " ", "\n", " ").Replace(strings.TrimSpace(value))
 }
