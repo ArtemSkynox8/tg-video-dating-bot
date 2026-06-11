@@ -77,6 +77,8 @@ func (s *DatingService) HandleMessage(ctx context.Context, msg maxapi.MessageUpd
 		return s.SendAdminDeepLinkTest(ctx, *user, strings.TrimSpace(strings.TrimPrefix(text, "/admin_deeplink ")))
 	case strings.HasPrefix(text, "/admin_deeplink_text ") && s.isAdmin(*user):
 		return s.SendAdminDeepLinkTextTest(ctx, *user, strings.TrimSpace(strings.TrimPrefix(text, "/admin_deeplink_text ")))
+	case strings.HasPrefix(text, "/admin_phone_link_text ") && s.isAdmin(*user):
+		return s.SendAdminPhoneLinkTextTest(ctx, *user, strings.TrimSpace(strings.TrimPrefix(text, "/admin_phone_link_text ")))
 	case strings.HasPrefix(text, "/user ") && s.isAdmin(*user):
 		return s.SendUserCard(ctx, *user, strings.TrimSpace(strings.TrimPrefix(text, "/user ")))
 	case strings.HasPrefix(text, "📬 Взаимные лайки"):
@@ -630,6 +632,7 @@ func (s *DatingService) SendAdminPanel(ctx context.Context, user models.User) er
 		"/user id - карточка пользователя по ID",
 		"/admin_deeplink platform_user_id - тест deep link MAX",
 		"/admin_deeplink_text platform_user_id - тест ссылок текстом",
+		"/admin_phone_link_text phone - тест ссылок по телефону",
 		"/tester_reset_me - очистить свой профиль",
 		"/admin_reset_store confirm - полностью очистить базу бота",
 		"",
@@ -716,6 +719,36 @@ func (s *DatingService) SendAdminDeepLinkTextTest(ctx context.Context, admin mod
 		"https://max.ru/id" + url.PathEscape(platformUserID),
 		"",
 		"Если один из вариантов откроет профиль или чат, напишите какой именно.",
+	}, "\n")
+	return s.max.SendText(ctx, admin.PlatformChatID, text, nil)
+}
+
+func (s *DatingService) SendAdminPhoneLinkTextTest(ctx context.Context, admin models.User, phone string) error {
+	phone = strings.TrimSpace(phone)
+	if phone == "" {
+		return s.max.SendText(ctx, admin.PlatformChatID, "Укажите телефон:\n/admin_phone_link_text 79994589830", nil)
+	}
+	cleanPhone := strings.NewReplacer(" ", "", "-", "", "(", "", ")", "").Replace(phone)
+	phoneNoPlus := strings.TrimPrefix(cleanPhone, "+")
+	escaped := url.QueryEscape(cleanPhone)
+	escapedNoPlus := url.QueryEscape(phoneNoPlus)
+	text := strings.Join([]string{
+		"Тест ссылок MAX текстом для телефона: " + cleanPhone,
+		"",
+		"Проверьте ссылки прямо здесь, потом перешлите это сообщение в «Избранное» и проверьте еще раз.",
+		"",
+		"tel:" + cleanPhone,
+		"tel:+" + phoneNoPlus,
+		"https://max.ru/phone/" + url.PathEscape(phoneNoPlus),
+		"https://max.ru/phone/" + url.PathEscape(cleanPhone),
+		"https://max.ru/contact?phone=" + escaped,
+		"https://max.ru/contact?phone=" + escapedNoPlus,
+		"https://max.ru/chat?phone=" + escaped,
+		"https://max.ru/chat?phone=" + escapedNoPlus,
+		"https://max.ru/user?phone=" + escaped,
+		"https://max.ru/user?phone=" + escapedNoPlus,
+		"",
+		"Если один из вариантов откроет профиль или чат в MAX, напишите какой именно.",
 	}, "\n")
 	return s.max.SendText(ctx, admin.PlatformChatID, text, nil)
 }
