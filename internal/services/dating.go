@@ -283,9 +283,13 @@ func (s *DatingService) SaveRecordedVideo(ctx context.Context, user models.User,
 	if err := s.repo.ClearFlowState(ctx, user.ID); err != nil {
 		return err
 	}
-	return s.max.SendText(ctx, user.PlatformChatID, "✅ Кружок успешно сохранен.", [][]maxapi.Button{
-		{{Text: "▶️ Начать просмотр", Payload: "browse"}},
-	})
+	if strings.TrimSpace(user.ProfileLink) == "" {
+		return s.max.SendText(ctx, user.PlatformChatID, "✅ Кружок успешно сохранен.\n\nЧтобы другие пользователи могли написать вам после взаимного лайка, добавьте свой контакт MAX.", [][]maxapi.Button{
+			{{Text: "💬 Поделиться своим контактом", Payload: "edit_profile_link"}},
+			{{Text: "▶️ Начать просмотр", Payload: "browse"}},
+		})
+	}
+	return s.max.SendText(ctx, user.PlatformChatID, "✅ Кружок успешно сохранен.", [][]maxapi.Button{{{Text: "▶️ Начать просмотр", Payload: "browse"}}})
 }
 
 func (s *DatingService) SaveNameStep(ctx context.Context, user models.User, name string) error {
@@ -325,7 +329,10 @@ func (s *DatingService) SaveProfileLink(ctx context.Context, user models.User, l
 	if err := s.repo.ClearFlowState(ctx, user.ID); err != nil {
 		return err
 	}
-	return s.max.SendText(ctx, user.PlatformChatID, "Ссылка MAX сохранена. Теперь при взаимном лайке или Premium-контакте кнопка «Написать» будет открывать личные сообщения.", mainMenuButtons())
+	return s.max.SendText(ctx, user.PlatformChatID, "Ссылка MAX сохранена. Теперь при взаимном лайке или Premium-контакте кнопка «Написать» будет открывать личные сообщения.", [][]maxapi.Button{
+		{{Text: "▶️ Начать просмотр", Payload: "browse"}},
+		{{Text: "☰ Главное меню", Payload: "main_menu"}},
+	})
 }
 
 func (s *DatingService) SaveGenderStep(ctx context.Context, user models.User, gender string) error {
