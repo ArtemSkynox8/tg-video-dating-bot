@@ -75,6 +75,8 @@ func (s *DatingService) HandleMessage(ctx context.Context, msg maxapi.MessageUpd
 		return s.AdminResetStore(ctx, *user)
 	case strings.HasPrefix(text, "/admin_deeplink ") && s.isAdmin(*user):
 		return s.SendAdminDeepLinkTest(ctx, *user, strings.TrimSpace(strings.TrimPrefix(text, "/admin_deeplink ")))
+	case strings.HasPrefix(text, "/admin_deeplink_text ") && s.isAdmin(*user):
+		return s.SendAdminDeepLinkTextTest(ctx, *user, strings.TrimSpace(strings.TrimPrefix(text, "/admin_deeplink_text ")))
 	case strings.HasPrefix(text, "/user ") && s.isAdmin(*user):
 		return s.SendUserCard(ctx, *user, strings.TrimSpace(strings.TrimPrefix(text, "/user ")))
 	case strings.HasPrefix(text, "📬 Взаимные лайки"):
@@ -627,6 +629,7 @@ func (s *DatingService) SendAdminPanel(ctx context.Context, user models.User) er
 		"/botstats - общая статистика",
 		"/user id - карточка пользователя по ID",
 		"/admin_deeplink platform_user_id - тест deep link MAX",
+		"/admin_deeplink_text platform_user_id - тест ссылок текстом",
 		"/tester_reset_me - очистить свой профиль",
 		"/admin_reset_store confirm - полностью очистить базу бота",
 		"",
@@ -692,6 +695,29 @@ func (s *DatingService) SendAdminDeepLinkTest(ctx context.Context, admin models.
 		{{Text: "https /id/user_id", URL: "https://max.ru/id" + url.PathEscape(platformUserID)}},
 		{{Text: "share fallback", URL: "https://max.ru/:share?text=" + shareText}},
 	})
+}
+
+func (s *DatingService) SendAdminDeepLinkTextTest(ctx context.Context, admin models.User, platformUserID string) error {
+	platformUserID = strings.TrimSpace(platformUserID)
+	if platformUserID == "" {
+		return s.max.SendText(ctx, admin.PlatformChatID, "Укажите platform_user_id:\n/admin_deeplink_text 5156654", nil)
+	}
+	escaped := url.QueryEscape(platformUserID)
+	text := strings.Join([]string{
+		"Тест ссылок MAX текстом для user_id: " + platformUserID,
+		"",
+		"Проверьте ссылки прямо здесь, потом перешлите это сообщение в «Избранное» и проверьте еще раз.",
+		"",
+		"max://user?id=" + escaped,
+		"max://chat?user_id=" + escaped,
+		"https://max.ru/user?id=" + escaped,
+		"https://max.ru/chat?user_id=" + escaped,
+		"https://max.ru/u/" + url.PathEscape(platformUserID),
+		"https://max.ru/id" + url.PathEscape(platformUserID),
+		"",
+		"Если один из вариантов откроет профиль или чат, напишите какой именно.",
+	}, "\n")
+	return s.max.SendText(ctx, admin.PlatformChatID, text, nil)
 }
 
 func (s *DatingService) HandleAdmin(ctx context.Context, user models.User, parts []string) error {
