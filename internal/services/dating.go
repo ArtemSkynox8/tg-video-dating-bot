@@ -550,17 +550,20 @@ func (s *DatingService) HandleUserReport(ctx context.Context, user models.User, 
 
 func (s *DatingService) SendAdminPanel(ctx context.Context, user models.User) error {
 	text := strings.Join([]string{
-		"Админ-панель:",
-		"/admin - меню админа",
-		"/commands - все команды",
+		"Админ-меню:",
 		"/botstats - общая статистика",
-		"/user id - карточка пользователя",
+		"/user id - карточка пользователя по ID",
 		"/tester_reset_me - очистить свой профиль",
 		"/admin_reset_store confirm - полностью очистить базу бота",
+		"",
+		"Эта команда скрыта из общего списка. Публичные команды доступны через /help.",
 	}, "\n")
 	return s.max.SendText(ctx, user.PlatformChatID, text, [][]maxapi.Button{
-		{{Text: "📊 Статистика", Payload: "admin:stats"}, {Text: "👥 Пользователи", Payload: "admin:users"}},
+		{{Text: "📊 Статистика", Payload: "admin:stats"}},
+		{{Text: "👥 Пользователи", Payload: "admin:users"}},
 		{{Text: "🧹 Очистить мой профиль", Payload: "admin:reset_me"}},
+		{{Text: "🗑 Очистить базу", Payload: "admin:reset_store_prompt"}},
+		{{Text: "☰ Главное меню", Payload: "main_menu"}},
 	})
 }
 
@@ -623,6 +626,8 @@ func (s *DatingService) HandleAdmin(ctx context.Context, user models.User, parts
 		return s.max.SendText(ctx, user.PlatformChatID, strings.Join(lines, "\n"), buttons)
 	case "reset_me":
 		return s.ResetMe(ctx, user)
+	case "reset_store_prompt":
+		return s.max.SendText(ctx, user.PlatformChatID, "Для полной очистки базы отправьте текстом:\n/admin_reset_store confirm", nil)
 	case "block":
 		if len(parts) == 3 {
 			if err := s.repo.SetUserStatus(ctx, parseID(parts[2]), models.StatusBlocked); err != nil {
