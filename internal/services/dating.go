@@ -7,8 +7,10 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"slices"
 	"strings"
@@ -30,12 +32,15 @@ type DatingService struct {
 	publicBaseURL             string
 	premiumPrice              string
 	contactInstructionVideoID string
+	contactInstructionVideoPath  string
+	contactInstructionVideoToken string
+	contactInstructionVideoMu    sync.Mutex
 	forwards                  map[string]maxapi.ForwardInfo
 	forwardsMu                sync.RWMutex
 }
 
-func NewDatingService(repo *repositories.Repository, max *maxapi.Client, adminIDs []string, publicBaseURL, premiumPrice, contactInstructionVideoID string) *DatingService {
-	return &DatingService{repo: repo, max: max, adminIDs: adminIDs, publicBaseURL: strings.TrimRight(publicBaseURL, "/"), premiumPrice: premiumPrice, contactInstructionVideoID: strings.TrimSpace(contactInstructionVideoID), forwards: map[string]maxapi.ForwardInfo{}}
+func NewDatingService(repo *repositories.Repository, max *maxapi.Client, adminIDs []string, publicBaseURL, premiumPrice, contactInstructionVideoID, contactInstructionVideoPath string) *DatingService {
+	return &DatingService{repo: repo, max: max, adminIDs: adminIDs, publicBaseURL: strings.TrimRight(publicBaseURL, "/"), premiumPrice: premiumPrice, contactInstructionVideoID: strings.TrimSpace(contactInstructionVideoID), contactInstructionVideoPath: strings.TrimSpace(contactInstructionVideoPath), forwards: map[string]maxapi.ForwardInfo{}}
 }
 
 func (s *DatingService) HandleMessage(ctx context.Context, msg maxapi.MessageUpdate) error {
@@ -307,10 +312,45 @@ func (s *DatingService) SendProfileShareInstructions(ctx context.Context, user m
 	if err := s.max.SendText(ctx, user.PlatformChatID, text, contactShareButtons()); err != nil {
 		return err
 	}
-	if s.contactInstructionVideoID != "" {
-		_, _ = s.max.SendMediaToDialogOrUser(ctx, user.PlatformDialogID, user.PlatformChatID, s.contactInstructionVideoID, "Короткая видеоинструкция: как поделиться профилем MAX.", nil)
+	if err := s.SendContactInstructionVideo(ctx, user); err != nil {
+		log.Printf("send contact instruction video user=%s: %v", user.PlatformUserID, err)
 	}
 	return nil
+}
+
+func (s *DatingService) SendContactInstructionVideo(ctx context.Context, user models.User) error {
+	token, err := s.ContactInstructionVideoToken(ctx)
+	if err != nil || token == "" {
+		return err
+	}
+	_, err = s.max.SendMediaToDialogOrUser(ctx, user.PlatformDialogID, user.PlatformChatID, token, "Короткая видеоинструкция: как поделиться профилем MAX.", nil)
+	return err
+}
+
+func (s *DatingService) ContactInstructionVideoToken(ctx context.Context) (string, error) {
+	if s.contactInstructionVideoID != "" {
+		return s.contactInstructionVideoID, nil
+	}
+	if s.contactInstructionVideoPath == "" {
+		return "", nil
+	}
+	s.contactInstructionVideoMu.Lock()
+	defer s.contactInstructionVideoMu.Unlock()
+	if s.contactInstructionVideoToken != "" {
+		return s.contactInstructionVideoToken, nil
+	}
+	if _, err := os.Stat(s.contactInstructionVideoPath); err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	token, err := s.max.UploadVideo(ctx, s.contactInstructionVideoPath)
+	if err != nil {
+		return "", err
+	}
+	s.contactInstructionVideoToken = token
+	return token, nil
 }
 
 func (s *DatingService) ResetMe(ctx context.Context, user models.User) error {

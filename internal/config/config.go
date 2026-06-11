@@ -22,6 +22,7 @@ type Config struct {
 	YooKassaSecretKey         string
 	PremiumPrice              string
 	ContactInstructionVideoID string
+	ContactInstructionVideoPath string
 }
 
 func Load() Config {
@@ -42,6 +43,7 @@ func Load() Config {
 		YooKassaSecretKey:         os.Getenv("YOOKASSA_SECRET_KEY"),
 		PremiumPrice:              getEnv("PREMIUM_PRICE", "199.00"),
 		ContactInstructionVideoID: os.Getenv("CONTACT_INSTRUCTION_VIDEO_ID"),
+		ContactInstructionVideoPath: getEnv("CONTACT_INSTRUCTION_VIDEO_PATH", "assets/contact-instruction/instruction.mp4"),
 	}
 }
 
