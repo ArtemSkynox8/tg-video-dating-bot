@@ -77,10 +77,10 @@ func (c *Client) SetCommands(ctx context.Context, commands []Command) error {
 		slashCommandCommands = append(slashCommandCommands, map[string]string{"command": "/" + strings.TrimPrefix(command.Name, "/"), "description": command.Description})
 	}
 	bodies := []any{
-		{"commands": nameCommands},
-		{"commands": commandCommands},
-		{"commands": slashNameCommands},
-		{"commands": slashCommandCommands},
+		map[string]any{"commands": nameCommands},
+		map[string]any{"commands": commandCommands},
+		map[string]any{"commands": slashNameCommands},
+		map[string]any{"commands": slashCommandCommands},
 		nameCommands,
 		commandCommands,
 	}
