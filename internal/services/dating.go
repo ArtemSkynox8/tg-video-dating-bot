@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"html"
 	"image"
 	_ "image/jpeg"
 	_ "image/png"
@@ -24,6 +25,8 @@ import (
 	"github.com/ArtemSkynox8/tg-video-dating-bot/internal/models"
 	"github.com/ArtemSkynox8/tg-video-dating-bot/internal/repositories"
 )
+
+const matchesPageSize = 10
 
 type DatingService struct {
 	repo                      *repositories.Repository
@@ -191,6 +194,10 @@ func (s *DatingService) HandleCallback(ctx context.Context, cb maxapi.CallbackUp
 		}
 	case "matches":
 		return s.SendMatches(ctx, *user)
+	case "matches_page":
+		if len(parts) == 2 {
+			return s.SendMatchesPage(ctx, *user, int(parseID(parts[1])))
+		}
 	case "match_actions":
 		if len(parts) == 2 {
 			return s.SendMatchActions(ctx, *user, parseID(parts[1]))
@@ -751,6 +758,10 @@ func (s *DatingService) HandleVideoReport(ctx context.Context, user models.User,
 }
 
 func (s *DatingService) SendMatches(ctx context.Context, user models.User) error {
+	return s.SendMatchesPage(ctx, user, 0)
+}
+
+func (s *DatingService) SendMatchesPage(ctx context.Context, user models.User, page int) error {
 	users, err := s.repo.ListVisibleMatches(ctx, user.ID)
 	if err != nil {
 		return err
@@ -758,17 +769,80 @@ func (s *DatingService) SendMatches(ctx context.Context, user models.User) error
 	if len(users) == 0 {
 		return s.max.SendText(ctx, user.PlatformChatID, "У вас пока нет взаимных лайков.", mainMenuButtons())
 	}
-	lines := []string{"📬 Взаимные лайки:", ""}
+	if page < 0 {
+		page = 0
+	}
+	maxPage := (len(users) - 1) / matchesPageSize
+	if page > maxPage {
+		page = maxPage
+	}
+	start := page * matchesPageSize
+	end := start + matchesPageSize
+	if end > len(users) {
+		end = len(users)
+	}
+
+	htmlLines := []string{"📬 <b>Взаимные лайки:</b>", ""}
+	plainLines := []string{"📬 Взаимные лайки:", ""}
 	buttons := [][]maxapi.Button{}
-	for _, u := range users {
-		lines = append(lines, displayName(u)+" | 🎥 Посмотреть кружок | 💬 Написать | ❌ Удалить")
-		buttons = append(buttons, []maxapi.Button{{Text: "⚙️ " + shortName(u.Name), Payload: fmt.Sprintf("match_actions:%d", u.ID)}})
+	for _, u := range users[start:end] {
+		videoURL := s.matchVideoURL(ctx, u.ID)
+		writeURL := profileURL(u)
+		hideURL := s.hideMatchURL(user, u.ID)
+		htmlLines = append(htmlLines, matchLineHTML(u, videoURL, writeURL, hideURL))
+		plainLines = append(plainLines, matchLinePlain(u, videoURL, writeURL, hideURL))
+	}
+	if page < maxPage {
+		buttons = append(buttons, []maxapi.Button{{Text: "Следующие 10 лайков", Payload: fmt.Sprintf("matches_page:%d", page+1)}})
+	}
+	if page > 0 {
+		buttons = append(buttons, []maxapi.Button{{Text: "Предыдущие 10 лайков", Payload: fmt.Sprintf("matches_page:%d", page-1)}})
 	}
 	buttons = append(buttons,
 		[]maxapi.Button{{Text: "▶️ Продолжить просмотр", Payload: "browse"}},
 		[]maxapi.Button{{Text: "☰ Главное меню", Payload: "main_menu"}},
 	)
-	return s.max.SendText(ctx, user.PlatformChatID, strings.Join(lines, "\n"), buttons)
+	return s.max.SendFormattedText(ctx, user.PlatformChatID, strings.Join(htmlLines, "\n"), strings.Join(plainLines, "\n"), buttons)
+}
+
+func matchLineHTML(match models.User, videoURL, profileURL, hideURL string) string {
+	parts := []string{html.EscapeString(displayName(match))}
+	if videoURL != "" {
+		parts = append(parts, `🎥 <a href="`+html.EscapeString(videoURL)+`">Посмотреть кружок</a>`)
+	} else {
+		parts = append(parts, "🎥 Посмотреть кружок")
+	}
+	if profileURL != "" {
+		parts = append(parts, `💬 <a href="`+html.EscapeString(profileURL)+`">Написать</a>`)
+	} else {
+		parts = append(parts, "💬 Написать")
+	}
+	if hideURL != "" {
+		parts = append(parts, `❌ <a href="`+html.EscapeString(hideURL)+`">Удалить</a>`)
+	} else {
+		parts = append(parts, "❌ Удалить")
+	}
+	return strings.Join(parts, " | ")
+}
+
+func matchLinePlain(match models.User, videoURL, profileURL, hideURL string) string {
+	parts := []string{displayName(match)}
+	if videoURL != "" {
+		parts = append(parts, "🎥 Посмотреть кружок: "+videoURL)
+	} else {
+		parts = append(parts, "🎥 Посмотреть кружок")
+	}
+	if profileURL != "" {
+		parts = append(parts, "💬 Написать: "+profileURL)
+	} else {
+		parts = append(parts, "💬 Написать")
+	}
+	if hideURL != "" {
+		parts = append(parts, "❌ Удалить: "+hideURL)
+	} else {
+		parts = append(parts, "❌ Удалить")
+	}
+	return strings.Join(parts, " | ")
 }
 
 func (s *DatingService) matchVideoURL(ctx context.Context, userID int64) string {
