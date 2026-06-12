@@ -59,11 +59,15 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	case "bot_started":
 		if update.User != nil {
+			text := "/start"
+			if payload := firstNonEmpty(update.Payload, update.StartParam, update.StartParamCamel, update.StartPayload); payload != "" {
+				text += " " + payload
+			}
 			err = h.service.HandleMessage(ctx, maxapi.MessageUpdate{
 				MessageID: fmt.Sprintf("bot-started-%d", update.Timestamp),
 				Chat:      maxapi.Chat{ID: update.User.ID},
 				From:      *update.User,
-				Text:      "/start",
+				Text:      text,
 			})
 		}
 	case "message_callback":

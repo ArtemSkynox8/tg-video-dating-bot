@@ -10,6 +10,10 @@ type Update struct {
 	UpdateType string         `json:"update_type"`
 	Timestamp  int64          `json:"timestamp"`
 	ChatID     int64          `json:"chat_id,omitempty"`
+	Payload    string         `json:"payload,omitempty"`
+	StartParam string         `json:"start_param,omitempty"`
+	StartParamCamel string    `json:"startParam,omitempty"`
+	StartPayload string       `json:"start_payload,omitempty"`
 	User       *PlatformUser  `json:"user,omitempty"`
 	Message    *Message       `json:"message,omitempty"`
 	Callback   *CallbackEvent `json:"callback,omitempty"`

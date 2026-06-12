@@ -33,6 +33,7 @@ type DatingService struct {
 	max                       *maxapi.Client
 	adminIDs                  []string
 	publicBaseURL             string
+	returnToBotURL            string
 	premiumPrice              string
 	contactInstructionVideoID string
 	contactInstructionVideoPath  string
@@ -42,8 +43,8 @@ type DatingService struct {
 	forwardsMu                sync.RWMutex
 }
 
-func NewDatingService(repo *repositories.Repository, max *maxapi.Client, adminIDs []string, publicBaseURL, premiumPrice, contactInstructionVideoID, contactInstructionVideoPath string) *DatingService {
-	return &DatingService{repo: repo, max: max, adminIDs: adminIDs, publicBaseURL: strings.TrimRight(publicBaseURL, "/"), premiumPrice: premiumPrice, contactInstructionVideoID: strings.TrimSpace(contactInstructionVideoID), contactInstructionVideoPath: strings.TrimSpace(contactInstructionVideoPath), forwards: map[string]maxapi.ForwardInfo{}}
+func NewDatingService(repo *repositories.Repository, max *maxapi.Client, adminIDs []string, publicBaseURL, returnToBotURL, premiumPrice, contactInstructionVideoID, contactInstructionVideoPath string) *DatingService {
+	return &DatingService{repo: repo, max: max, adminIDs: adminIDs, publicBaseURL: strings.TrimRight(publicBaseURL, "/"), returnToBotURL: strings.TrimSpace(returnToBotURL), premiumPrice: premiumPrice, contactInstructionVideoID: strings.TrimSpace(contactInstructionVideoID), contactInstructionVideoPath: strings.TrimSpace(contactInstructionVideoPath), forwards: map[string]maxapi.ForwardInfo{}}
 }
 
 func (s *DatingService) HandleMessage(ctx context.Context, msg maxapi.MessageUpdate) error {
@@ -68,6 +69,8 @@ func (s *DatingService) HandleMessage(ctx context.Context, msg maxapi.MessageUpd
 	switch {
 	case text == "/start":
 		return s.Start(ctx, *user)
+	case strings.HasPrefix(text, "/start "):
+		return s.HandleStartPayload(ctx, *user, strings.TrimSpace(strings.TrimPrefix(text, "/start ")))
 	case text == "/commands" || text == "/help":
 		return s.SendCommands(ctx, *user)
 	case text == "/browse":
@@ -786,10 +789,10 @@ func (s *DatingService) SendMatchesPage(ctx context.Context, user models.User, p
 	plainLines := []string{"📬 Взаимные лайки:", ""}
 	buttons := [][]maxapi.Button{}
 	for _, u := range users[start:end] {
+		profileActionURL := s.botStartURL(fmt.Sprintf("match_actions_%d", u.ID))
 		writeURL := profileURL(u)
-		htmlLines = append(htmlLines, matchListLineHTML(u, writeURL))
-		plainLines = append(plainLines, matchListLinePlain(u, writeURL))
-		buttons = append(buttons, []maxapi.Button{{Text: "📄 " + shortName(u.Name), Payload: fmt.Sprintf("match_actions:%d", u.ID)}})
+		htmlLines = append(htmlLines, matchListLineHTML(u, profileActionURL, writeURL))
+		plainLines = append(plainLines, matchListLinePlain(u, profileActionURL, writeURL))
 	}
 	if page < maxPage {
 		buttons = append(buttons, []maxapi.Button{{Text: "Следующие 10 лайков", Payload: fmt.Sprintf("matches_page:%d", page+1)}})
@@ -804,9 +807,13 @@ func (s *DatingService) SendMatchesPage(ctx context.Context, user models.User, p
 	return s.max.SendFormattedText(ctx, user.PlatformChatID, strings.Join(htmlLines, "\n"), strings.Join(plainLines, "\n"), buttons)
 }
 
-func matchListLineHTML(match models.User, profileURL string) string {
+func matchListLineHTML(match models.User, profileActionURL, profileURL string) string {
 	parts := []string{html.EscapeString(displayName(match))}
-	parts = append(parts, "📄 Открыть профиль")
+	if profileActionURL != "" {
+		parts = append(parts, `📄 <a href="`+html.EscapeString(profileActionURL)+`">Открыть профиль</a>`)
+	} else {
+		parts = append(parts, "📄 Открыть профиль")
+	}
 	if profileURL != "" {
 		parts = append(parts, `💬 <a href="`+html.EscapeString(profileURL)+`">Написать</a>`)
 	} else {
@@ -815,15 +822,42 @@ func matchListLineHTML(match models.User, profileURL string) string {
 	return strings.Join(parts, " | ")
 }
 
-func matchListLinePlain(match models.User, profileURL string) string {
+func matchListLinePlain(match models.User, profileActionURL, profileURL string) string {
 	parts := []string{displayName(match)}
-	parts = append(parts, "📄 Открыть профиль")
+	if profileActionURL != "" {
+		parts = append(parts, "📄 Открыть профиль: "+profileActionURL)
+	} else {
+		parts = append(parts, "📄 Открыть профиль")
+	}
 	if profileURL != "" {
 		parts = append(parts, "💬 Написать: "+profileURL)
 	} else {
 		parts = append(parts, "💬 Написать")
 	}
 	return strings.Join(parts, " | ")
+}
+
+func (s *DatingService) botStartURL(payload string) string {
+	baseURL := strings.TrimSpace(s.returnToBotURL)
+	if baseURL == "" || strings.TrimSpace(payload) == "" {
+		return ""
+	}
+	separator := "?"
+	if strings.Contains(baseURL, "?") {
+		separator = "&"
+	}
+	escaped := url.QueryEscape(payload)
+	return baseURL + separator + "start=" + escaped + "&start_param=" + escaped
+}
+
+func (s *DatingService) HandleStartPayload(ctx context.Context, user models.User, payload string) error {
+	payload = strings.TrimSpace(strings.TrimPrefix(payload, "start="))
+	payload = strings.TrimPrefix(payload, "match_actions:")
+	payload = strings.TrimPrefix(payload, "match_actions_")
+	if payload == "" {
+		return s.Start(ctx, user)
+	}
+	return s.SendMatchActions(ctx, user, parseID(payload))
 }
 
 func (s *DatingService) matchVideoURL(ctx context.Context, userID int64) string {
@@ -1483,10 +1517,7 @@ func mainMenuButtons() [][]maxapi.Button {
 		{{Text: "▶️ Начать просмотр", Payload: "browse"}},
 		{{Text: "📬 Взаимные лайки", Payload: "matches"}},
 		{{Text: "✏️ Изменить анкету", Payload: "edit_profile"}},
-		{
-			{Text: "🚨 Пожаловаться", Payload: "menu_report"},
-			{Text: "💎 Подписка", Payload: "premium"},
-		},
+		{{Text: "💎 Подписка", Payload: "premium"}},
 	}
 }
 
