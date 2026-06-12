@@ -765,8 +765,8 @@ func (s *DatingService) SendMatches(ctx context.Context, user models.User) error
 		buttons = append(buttons, []maxapi.Button{{Text: "⚙️ " + shortName(u.Name), Payload: fmt.Sprintf("match_actions:%d", u.ID)}})
 	}
 	buttons = append(buttons,
-		{{Text: "▶️ Продолжить просмотр", Payload: "browse"}},
-		{{Text: "☰ Главное меню", Payload: "main_menu"}},
+		[]maxapi.Button{{Text: "▶️ Продолжить просмотр", Payload: "browse"}},
+		[]maxapi.Button{{Text: "☰ Главное меню", Payload: "main_menu"}},
 	)
 	return s.max.SendText(ctx, user.PlatformChatID, strings.Join(lines, "\n"), buttons)
 }
