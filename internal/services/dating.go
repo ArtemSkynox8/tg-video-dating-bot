@@ -786,11 +786,11 @@ func (s *DatingService) SendMatchesPage(ctx context.Context, user models.User, p
 	plainLines := []string{"📬 Взаимные лайки:", ""}
 	buttons := [][]maxapi.Button{}
 	for _, u := range users[start:end] {
-		videoURL := s.matchVideoActionURL(user, u.ID)
 		writeURL := profileURL(u)
 		hideURL := s.hideMatchURL(user, u.ID)
-		htmlLines = append(htmlLines, matchLineHTML(u, videoURL, writeURL, hideURL))
-		plainLines = append(plainLines, matchLinePlain(u, videoURL, writeURL, hideURL))
+		htmlLines = append(htmlLines, matchLineHTML(u, "", writeURL, hideURL))
+		plainLines = append(plainLines, matchLinePlain(u, "", writeURL, hideURL))
+		buttons = append(buttons, []maxapi.Button{{Text: "🎥 " + shortName(u.Name), Payload: fmt.Sprintf("match_video:%d", u.ID)}})
 	}
 	if page < maxPage {
 		buttons = append(buttons, []maxapi.Button{{Text: "Следующие 10 лайков", Payload: fmt.Sprintf("matches_page:%d", page+1)}})
@@ -851,16 +851,6 @@ func (s *DatingService) matchVideoURL(ctx context.Context, userID int64) string 
 		return ""
 	}
 	return normalizePublicURL(s.publicBaseURL, video.StorageURL)
-}
-
-func (s *DatingService) matchVideoActionURL(user models.User, otherUserID int64) string {
-	if s.publicBaseURL == "" {
-		return ""
-	}
-	query := url.Values{}
-	query.Set("u", user.PlatformUserID)
-	query.Set("m", fmt.Sprint(otherUserID))
-	return s.publicBaseURL + "/matches/video?" + query.Encode()
 }
 
 func (s *DatingService) hideMatchURL(user models.User, otherUserID int64) string {
