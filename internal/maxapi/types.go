@@ -81,6 +81,11 @@ type Button struct {
 	RequestContact bool   `json:"request_contact,omitempty"`
 }
 
+type Command struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
 type Message struct {
 	Sender    PlatformUser `json:"sender"`
 	Recipient Recipient   `json:"recipient"`

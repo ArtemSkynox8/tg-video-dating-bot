@@ -12,19 +12,23 @@ import (
 	"time"
 
 	"github.com/ArtemSkynox8/tg-video-dating-bot/internal/config"
+	"github.com/ArtemSkynox8/tg-video-dating-bot/internal/maxapi"
+	"github.com/ArtemSkynox8/tg-video-dating-bot/internal/models"
 	"github.com/ArtemSkynox8/tg-video-dating-bot/internal/repositories"
 )
 
 type PaymentHandler struct {
 	cfg  config.Config
 	repo *repositories.Repository
+	max  *maxapi.Client
 	http *http.Client
 }
 
-func NewPaymentHandler(cfg config.Config, repo *repositories.Repository) *PaymentHandler {
+func NewPaymentHandler(cfg config.Config, repo *repositories.Repository, max *maxapi.Client) *PaymentHandler {
 	return &PaymentHandler{
 		cfg:  cfg,
 		repo: repo,
+		max:  max,
 		http: &http.Client{Timeout: 20 * time.Second},
 	}
 }
@@ -100,7 +104,52 @@ func (h *PaymentHandler) success(w http.ResponseWriter, r *http.Request) {
 		h.renderPayMessage(w, "Premium оплачен", "Оплата прошла, но доступ не включился автоматически. Напишите администратору.")
 		return
 	}
+	if user.PremiumOfferMessageID != "" {
+		_ = h.max.DeleteMessage(r.Context(), user.PremiumOfferChatID, user.PremiumOfferMessageID)
+		_ = h.repo.ClearPremiumOfferMessage(r.Context(), user.ID)
+	}
+	if target, err := h.repo.LatestContactRequest(r.Context(), user.ID); err == nil {
+		_ = h.sendPremiumContact(r.Context(), *user, *target)
+	}
 	h.renderPayMessage(w, "Premium активирован", "Сейчас вернём вас в бот. Если страница не закрылась автоматически, нажмите кнопку ниже.", true)
+}
+
+func (h *PaymentHandler) sendPremiumContact(ctx context.Context, user models.User, target models.User) error {
+	text := "💎 Premium активирован.\n\nКонтакт открыт: " + displayName(target)
+	buttons := [][]maxapi.Button{}
+	if link := normalizeProfileURL(target.ProfileLink); link != "" {
+		buttons = append(buttons, []maxapi.Button{{Text: "💬 Написать", URL: link}})
+	}
+	buttons = append(buttons,
+		[]maxapi.Button{{Text: "▶️ Продолжить просмотр", Payload: "browse"}},
+		[]maxapi.Button{{Text: "☰ Главное меню", Payload: "main_menu"}},
+	)
+	return h.max.SendText(ctx, user.PlatformChatID, text, buttons)
+}
+
+func displayName(user models.User) string {
+	name := strings.TrimSpace(user.Name)
+	if name != "" {
+		return name
+	}
+	return "Пользователь"
+}
+
+func normalizeProfileURL(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "https://") {
+		return value
+	}
+	if strings.HasPrefix(value, "u/") {
+		return "https://max.ru/" + value
+	}
+	if strings.HasPrefix(value, "@") {
+		return "https://max.ru/" + strings.TrimPrefix(value, "@")
+	}
+	return value
 }
 
 type yooKassaPayment struct {

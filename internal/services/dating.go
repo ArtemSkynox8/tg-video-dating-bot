@@ -73,7 +73,7 @@ func (s *DatingService) HandleMessage(ctx context.Context, msg maxapi.MessageUpd
 		return s.SendMatches(ctx, *user)
 	case text == "/profile":
 		return s.max.SendText(ctx, user.PlatformChatID, "Что хотите изменить?", editProfileButtons())
-	case text == "/subscription":
+	case text == "/subscription" || text == "/premium":
 		return s.SendPremiumOffer(ctx, *user)
 	case strings.HasPrefix(text, "/link "):
 		return s.SaveProfileLink(ctx, *user, strings.TrimSpace(strings.TrimPrefix(text, "/link ")))
@@ -172,6 +172,10 @@ func (s *DatingService) HandleCallback(ctx context.Context, cb maxapi.CallbackUp
 				action = models.ActionLike
 			}
 			return s.HandleBrowseAction(ctx, *user, cb.Chat.ID, cb.MessageID, parts[1], parts[2], action)
+		}
+	case "like_only":
+		if len(parts) == 3 {
+			return s.HandleLikeOnly(ctx, *user, cb.Chat.ID, cb.MessageID, parts[1], parts[2])
 		}
 	case "report":
 		if len(parts) == 3 {
@@ -290,12 +294,16 @@ func (s *DatingService) SendPremiumOffer(ctx context.Context, user models.User) 
 		"• возможность писать первым без взаимного лайка;\n" +
 		"• неограниченный просмотр кружков.\n\n" +
 		"Нажимая кнопку оплаты, вы соглашаетесь с условиями оферты."
-	return s.max.SendText(ctx, user.PlatformChatID, text, [][]maxapi.Button{
+	messageID, err := s.max.SendTextWithID(ctx, user.PlatformChatID, text, [][]maxapi.Button{
 		{{Text: "💎 Оплатить Premium доступ", URL: s.premiumPaymentURL(user)}},
 		{{Text: "▶️ Продолжить просмотр", Payload: "browse"}},
 		{{Text: "📄 Оферта", URL: offerURL}},
 		{{Text: "☰ Главное меню", Payload: "main_menu"}},
 	})
+	if err != nil {
+		return err
+	}
+	return s.repo.UpdatePremiumOfferMessage(ctx, user.ID, user.PlatformChatID, messageID)
 }
 
 func (s *DatingService) SendRecordPrompt(ctx context.Context, user models.User, text string) error {
@@ -624,6 +632,41 @@ func (s *DatingService) HandleBrowseAction(ctx context.Context, user models.User
 	return s.SendNextCandidate(ctx, user)
 }
 
+func (s *DatingService) HandleLikeOnly(ctx context.Context, user models.User, chatID, messageID, videoIDText, ownerIDText string) error {
+	videoID, ownerID := parseID(videoIDText), parseID(ownerIDText)
+	if videoID == 0 || ownerID == 0 {
+		return nil
+	}
+	_ = s.max.DeleteMessage(ctx, chatID, messageID)
+	if err := s.repo.CreateView(ctx, user.ID, videoID, ownerID, models.ActionLike); err != nil {
+		return err
+	}
+	if _, err := s.repo.CreateLike(ctx, user.ID, ownerID); err != nil {
+		return err
+	}
+	if err := s.repo.EnqueuePriority(ctx, ownerID, user.ID); err != nil {
+		return err
+	}
+	reverse, err := s.repo.HasReverseLike(ctx, user.ID, ownerID)
+	if err != nil {
+		return err
+	}
+	if reverse {
+		owner, err := s.repo.GetUserByID(ctx, ownerID)
+		if err != nil {
+			return err
+		}
+		if err := s.repo.CreateMatch(ctx, user.ID, ownerID); err != nil {
+			return err
+		}
+		if err := s.sendContactAccess(ctx, owner.PlatformChatID, "❤️ У вас новый взаимный лайк!", user, true); err != nil {
+			return err
+		}
+		return s.sendContactAccess(ctx, chatID, "❤️ У вас новый взаимный лайк!", *owner, true)
+	}
+	return s.SendNextCandidate(ctx, user)
+}
+
 func (s *DatingService) sendContactAccess(ctx context.Context, recipientID, title string, target models.User, includeMatches bool) error {
 	if err := s.max.SendText(ctx, recipientID, title+"\n\n"+contactLineWithPhone(target), contactButtons(target, includeMatches)); err != nil {
 		return err
@@ -660,25 +703,33 @@ func (s *DatingService) SendMatches(ctx context.Context, user models.User) error
 	if len(users) == 0 {
 		return s.max.SendText(ctx, user.PlatformChatID, "У вас пока нет взаимных лайков.", mainMenuButtons())
 	}
-	lines := []string{"📬 Взаимные лайки:"}
-	buttons := [][]maxapi.Button{}
+	lines := []string{"📬 Взаимные лайки:", ""}
 	for _, u := range users {
-		lines = append(lines, contactLineWithPhone(u))
-		row := []maxapi.Button{}
-		if url := profileURL(u); url != "" {
-			row = append(row, maxapi.Button{Text: "💬 " + shortName(u.Name), URL: url})
-		} else if strings.TrimSpace(u.ContactPhone) != "" {
-			row = append(row, maxapi.Button{Text: "📇 Контакт", Payload: fmt.Sprintf("match_contact:%d", u.ID)})
-		} else if strings.TrimSpace(u.ContactPhone) == "" {
-			row = append(row, maxapi.Button{Text: "💬 Нет ссылки", Payload: "missing_profile_link"})
+		parts := []string{displayName(u)}
+		if link := s.matchVideoURL(ctx, u.ID); link != "" {
+			parts = append(parts, "[🎥 Посмотреть кружок]("+link+")")
+		} else {
+			parts = append(parts, "🎥 Кружок недоступен")
 		}
-		row = append(row,
-			maxapi.Button{Text: "🎥 Видео", Payload: fmt.Sprintf("match_video:%d", u.ID)},
-			maxapi.Button{Text: "🗑 Удалить", Payload: fmt.Sprintf("hide_match:%d", u.ID)},
-		)
-		buttons = append(buttons, row)
+		if link := profileURL(u); link != "" {
+			parts = append(parts, "[💬 Написать]("+link+")")
+		} else {
+			parts = append(parts, "💬 Ссылка недоступна")
+		}
+		lines = append(lines, strings.Join(parts, " | "))
 	}
-	return s.max.SendText(ctx, user.PlatformChatID, strings.Join(lines, "\n"), buttons)
+	return s.max.SendText(ctx, user.PlatformChatID, strings.Join(lines, "\n"), [][]maxapi.Button{
+		{{Text: "▶️ Продолжить просмотр", Payload: "browse"}},
+		{{Text: "☰ Главное меню", Payload: "main_menu"}},
+	})
+}
+
+func (s *DatingService) matchVideoURL(ctx context.Context, userID int64) string {
+	video, err := s.repo.GetActiveVideoByUser(ctx, userID)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(video.StorageURL)
 }
 
 func (s *DatingService) SendMatchVideo(ctx context.Context, user models.User, otherUserID int64) error {
@@ -1172,8 +1223,11 @@ func preferredButtons() [][]maxapi.Button {
 
 func browseButtons(videoID, ownerID int64) [][]maxapi.Button {
 	return [][]maxapi.Button{
-		{{Text: "❤️ Написать", Payload: fmt.Sprintf("like:%d:%d", videoID, ownerID)}},
-		{{Text: "⏭ Следующий", Payload: fmt.Sprintf("next:%d:%d", videoID, ownerID)}},
+		{
+			{Text: "❤️ Лайк", Payload: fmt.Sprintf("like_only:%d:%d", videoID, ownerID)},
+			{Text: "⏭ Следующий", Payload: fmt.Sprintf("next:%d:%d", videoID, ownerID)},
+		},
+		{{Text: "💬 Написать", Payload: fmt.Sprintf("like:%d:%d", videoID, ownerID)}},
 		{
 			{Text: "🚨 Пожаловаться", Payload: fmt.Sprintf("report:%d:%d", videoID, ownerID)},
 			{Text: "☰ Меню", Payload: "main_menu"},

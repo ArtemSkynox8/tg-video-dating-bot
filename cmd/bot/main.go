@@ -114,7 +114,7 @@ func initializeBot(ctx context.Context, cfg config.Config, webhook *dynamicWebho
 	webhook.Set(handlers.NewWebhookHandler(cfg, botService))
 	miniMux := http.NewServeMux()
 	handlers.NewMiniAppHandler(cfg, repo, maxClient).Register(miniMux)
-	handlers.NewPaymentHandler(cfg, repo).Register(miniMux)
+	handlers.NewPaymentHandler(cfg, repo, maxClient).Register(miniMux)
 	miniapp.Set(miniMux)
 	log.Printf("bot services initialized")
 
@@ -124,6 +124,17 @@ func initializeBot(ctx context.Context, cfg config.Config, webhook *dynamicWebho
 			log.Printf("subscribe max webhook %s: %v", webhookURL, err)
 		} else {
 			log.Printf("max webhook subscribed: %s", webhookURL)
+		}
+		if err := maxClient.SetCommands(ctx, []maxapi.Command{
+			{Name: "start", Description: "Запустить знакомства"},
+			{Name: "browse", Description: "Смотреть кружки"},
+			{Name: "matches", Description: "Взаимные лайки"},
+			{Name: "profile", Description: "Изменить анкету"},
+			{Name: "subscription", Description: "Подписка"},
+		}); err != nil {
+			log.Printf("set max commands: %v", err)
+		} else {
+			log.Printf("max commands updated")
 		}
 	}
 }

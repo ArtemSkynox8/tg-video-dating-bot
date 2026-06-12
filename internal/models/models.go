@@ -17,6 +17,8 @@ type User struct {
 	IsPremium      bool
 	Status         string
 	RestrictedUntil *time.Time
+	PremiumOfferChatID string
+	PremiumOfferMessageID string
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -38,6 +39,79 @@ func (c *Client) SendText(ctx context.Context, userID, text string, buttons [][]
 		body["attachments"] = inlineKeyboard(buttons)
 	}
 	return c.post(ctx, "/messages?user_id="+url.QueryEscape(userID), body, nil)
+}
+
+func (c *Client) SendTextWithID(ctx context.Context, userID, text string, buttons [][]Button) (string, error) {
+	body := map[string]any{
+		"text": text,
+	}
+	if len(buttons) > 0 {
+		body["attachments"] = inlineKeyboard(buttons)
+	}
+	var out struct {
+		Message   Message `json:"message"`
+		MessageID string  `json:"message_id"`
+		MID       string  `json:"mid"`
+	}
+	if err := c.post(ctx, "/messages?user_id="+url.QueryEscape(userID), body, &out); err != nil {
+		return "", err
+	}
+	if out.Message.Body.MID != "" {
+		return out.Message.Body.MID, nil
+	}
+	if out.MessageID != "" {
+		return out.MessageID, nil
+	}
+	return out.MID, nil
+}
+
+func (c *Client) SetCommands(ctx context.Context, commands []Command) error {
+	nameCommands := make([]map[string]string, 0, len(commands))
+	commandCommands := make([]map[string]string, 0, len(commands))
+	slashNameCommands := make([]map[string]string, 0, len(commands))
+	slashCommandCommands := make([]map[string]string, 0, len(commands))
+	for _, command := range commands {
+		nameCommands = append(nameCommands, map[string]string{"name": command.Name, "description": command.Description})
+		commandCommands = append(commandCommands, map[string]string{"command": command.Name, "description": command.Description})
+		slashNameCommands = append(slashNameCommands, map[string]string{"name": "/" + strings.TrimPrefix(command.Name, "/"), "description": command.Description})
+		slashCommandCommands = append(slashCommandCommands, map[string]string{"command": "/" + strings.TrimPrefix(command.Name, "/"), "description": command.Description})
+	}
+	bodies := []any{
+		{"commands": nameCommands},
+		{"commands": commandCommands},
+		{"commands": slashNameCommands},
+		{"commands": slashCommandCommands},
+		nameCommands,
+		commandCommands,
+	}
+	attempts := []struct {
+		method string
+		path   string
+	}{
+		{http.MethodPatch, "/me"},
+		{http.MethodPatch, "/me/commands"},
+		{http.MethodPost, "/me/commands"},
+		{http.MethodPut, "/me/commands"},
+		{http.MethodPatch, "/commands"},
+		{http.MethodPost, "/commands"},
+		{http.MethodPut, "/commands"},
+		{http.MethodPost, "/bot/commands"},
+		{http.MethodPut, "/bot/commands"},
+		{http.MethodPost, "/my/commands"},
+		{http.MethodPut, "/my/commands"},
+	}
+	var lastErr error
+	for bodyIndex, body := range bodies {
+		for _, attempt := range attempts {
+			if err := c.doJSON(ctx, attempt.method, attempt.path, body, nil); err == nil {
+				log.Printf("max commands updated via %s %s body=%d", attempt.method, attempt.path, bodyIndex)
+				return nil
+			} else {
+				lastErr = err
+			}
+		}
+	}
+	return lastErr
 }
 
 func (c *Client) SendContactCard(ctx context.Context, userID, name, phone string) error {
@@ -285,6 +359,14 @@ func (c *Client) SubscribeWebhook(ctx context.Context, url, secret string, updat
 }
 
 func (c *Client) post(ctx context.Context, path string, in any, out any) error {
+	return c.doJSON(ctx, http.MethodPost, path, in, out)
+}
+
+func (c *Client) patch(ctx context.Context, path string, in any, out any) error {
+	return c.doJSON(ctx, http.MethodPatch, path, in, out)
+}
+
+func (c *Client) doJSON(ctx context.Context, method, path string, in any, out any) error {
 	var reader io.Reader
 	if in == nil {
 		reader = http.NoBody
@@ -295,7 +377,7 @@ func (c *Client) post(ctx context.Context, path string, in any, out any) error {
 		}
 		reader = bytes.NewReader(payload)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, reader)
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reader)
 	if err != nil {
 		return err
 	}
@@ -317,7 +399,13 @@ func (c *Client) post(ctx context.Context, path string, in any, out any) error {
 	if out == nil {
 		return nil
 	}
-	return json.NewDecoder(res.Body).Decode(out)
+	if err := json.NewDecoder(res.Body).Decode(out); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func uploadMultipart(ctx context.Context, client *http.Client, uploadURL, path string) (map[string]any, error) {
