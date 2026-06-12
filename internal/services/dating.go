@@ -787,10 +787,9 @@ func (s *DatingService) SendMatchesPage(ctx context.Context, user models.User, p
 	buttons := [][]maxapi.Button{}
 	for _, u := range users[start:end] {
 		writeURL := profileURL(u)
-		hideURL := s.hideMatchURL(user, u.ID)
-		htmlLines = append(htmlLines, matchLineHTML(u, "", writeURL, hideURL))
-		plainLines = append(plainLines, matchLinePlain(u, "", writeURL, hideURL))
-		buttons = append(buttons, []maxapi.Button{{Text: "🎥 " + shortName(u.Name), Payload: fmt.Sprintf("match_video:%d", u.ID)}})
+		htmlLines = append(htmlLines, matchListLineHTML(u, writeURL))
+		plainLines = append(plainLines, matchListLinePlain(u, writeURL))
+		buttons = append(buttons, []maxapi.Button{{Text: "📄 " + shortName(u.Name), Payload: fmt.Sprintf("match_actions:%d", u.ID)}})
 	}
 	if page < maxPage {
 		buttons = append(buttons, []maxapi.Button{{Text: "Следующие 10 лайков", Payload: fmt.Sprintf("matches_page:%d", page+1)}})
@@ -805,42 +804,24 @@ func (s *DatingService) SendMatchesPage(ctx context.Context, user models.User, p
 	return s.max.SendFormattedText(ctx, user.PlatformChatID, strings.Join(htmlLines, "\n"), strings.Join(plainLines, "\n"), buttons)
 }
 
-func matchLineHTML(match models.User, videoURL, profileURL, hideURL string) string {
+func matchListLineHTML(match models.User, profileURL string) string {
 	parts := []string{html.EscapeString(displayName(match))}
-	if videoURL != "" {
-		parts = append(parts, `🎥 <a href="`+html.EscapeString(videoURL)+`">Посмотреть кружок</a>`)
-	} else {
-		parts = append(parts, "🎥 Посмотреть кружок")
-	}
+	parts = append(parts, "📄 Открыть профиль")
 	if profileURL != "" {
 		parts = append(parts, `💬 <a href="`+html.EscapeString(profileURL)+`">Написать</a>`)
 	} else {
 		parts = append(parts, "💬 Написать")
 	}
-	if hideURL != "" {
-		parts = append(parts, `❌ <a href="`+html.EscapeString(hideURL)+`">Удалить</a>`)
-	} else {
-		parts = append(parts, "❌ Удалить")
-	}
 	return strings.Join(parts, " | ")
 }
 
-func matchLinePlain(match models.User, videoURL, profileURL, hideURL string) string {
+func matchListLinePlain(match models.User, profileURL string) string {
 	parts := []string{displayName(match)}
-	if videoURL != "" {
-		parts = append(parts, "🎥 Посмотреть кружок: "+videoURL)
-	} else {
-		parts = append(parts, "🎥 Посмотреть кружок")
-	}
+	parts = append(parts, "📄 Открыть профиль")
 	if profileURL != "" {
 		parts = append(parts, "💬 Написать: "+profileURL)
 	} else {
 		parts = append(parts, "💬 Написать")
-	}
-	if hideURL != "" {
-		parts = append(parts, "❌ Удалить: "+hideURL)
-	} else {
-		parts = append(parts, "❌ Удалить")
 	}
 	return strings.Join(parts, " | ")
 }
@@ -875,22 +856,22 @@ func (s *DatingService) SendMatchActions(ctx context.Context, user models.User, 
 		return s.max.SendText(ctx, user.PlatformChatID, "Этот контакт недоступен.", mainMenuButtons())
 	}
 	buttons := [][]maxapi.Button{}
-	buttons = append(buttons, []maxapi.Button{{Text: "🎥 Посмотреть кружок", Payload: fmt.Sprintf("match_video:%d", otherUserID)}})
+	actionRow := []maxapi.Button{}
 	if link := profileURL(*other); link != "" {
-		buttons = append(buttons, []maxapi.Button{{Text: "💬 Написать", URL: link}})
+		actionRow = append(actionRow, maxapi.Button{Text: "💬 Написать", URL: link})
 	} else {
-		buttons = append(buttons, []maxapi.Button{{Text: "💬 Ссылка недоступна", Payload: "missing_profile_link"}})
+		actionRow = append(actionRow, maxapi.Button{Text: "💬 Ссылка недоступна", Payload: "missing_profile_link"})
 	}
-	if link := s.hideMatchURL(user, otherUserID); link != "" {
-		buttons = append(buttons, []maxapi.Button{{Text: "❌ Удалить", URL: link}})
-	} else {
-		buttons = append(buttons, []maxapi.Button{{Text: "❌ Удалить", Payload: fmt.Sprintf("hide_match:%d", otherUserID)}})
-	}
+	actionRow = append(actionRow, maxapi.Button{Text: "🎥 Смотреть кружок", Payload: fmt.Sprintf("match_video:%d", otherUserID)})
 	buttons = append(buttons,
-		[]maxapi.Button{{Text: "📬 Взаимные лайки", Payload: "matches"}},
-		[]maxapi.Button{{Text: "☰ Главное меню", Payload: "main_menu"}},
+		actionRow,
+		[]maxapi.Button{
+			{Text: "🚨 Пожаловаться", Payload: fmt.Sprintf("report_user:%d", otherUserID)},
+			{Text: "☰ Меню", Payload: "main_menu"},
+		},
+		[]maxapi.Button{{Text: "▶️ Продолжить просмотр", Payload: "browse"}},
 	)
-	return s.max.SendText(ctx, user.PlatformChatID, "Действия для контакта: "+displayName(*other), buttons)
+	return s.max.SendText(ctx, user.PlatformChatID, "Выберите, что хотите сделать с контактом: "+displayName(*other), buttons)
 }
 
 func (s *DatingService) SendMatchVideo(ctx context.Context, user models.User, otherUserID int64) error {
