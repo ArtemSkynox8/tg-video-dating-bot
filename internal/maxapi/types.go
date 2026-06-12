@@ -81,6 +81,12 @@ type Button struct {
 	RequestContact bool   `json:"request_contact,omitempty"`
 }
 
+type TextLink struct {
+	From   int
+	Length int
+	URL    string
+}
+
 type Command struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`

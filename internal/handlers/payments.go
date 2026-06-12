@@ -37,6 +37,7 @@ func (h *PaymentHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /offer", h.offer)
 	mux.HandleFunc("GET /pay", h.pay)
 	mux.HandleFunc("GET /pay/success", h.success)
+	mux.HandleFunc("GET /matches/hide", h.hideMatch)
 }
 
 func (h *PaymentHandler) offer(w http.ResponseWriter, _ *http.Request) {
@@ -127,6 +128,30 @@ func (h *PaymentHandler) sendPremiumContact(ctx context.Context, user models.Use
 	return h.max.SendText(ctx, user.PlatformChatID, text, buttons)
 }
 
+func (h *PaymentHandler) hideMatch(w http.ResponseWriter, r *http.Request) {
+	platformUserID := strings.TrimSpace(r.URL.Query().Get("u"))
+	matchID := strings.TrimSpace(r.URL.Query().Get("m"))
+	user, err := h.repo.GetUserByPlatformID(r.Context(), platformUserID)
+	if err != nil {
+		h.renderPayMessage(w, "Не удалось удалить", "Вернитесь в бот и попробуйте открыть список взаимных лайков заново.")
+		return
+	}
+	otherID, err := parseInt64(matchID)
+	if err != nil || otherID == 0 {
+		h.renderPayMessage(w, "Не удалось удалить", "Ссылка удаления некорректна.")
+		return
+	}
+	if err := h.repo.HideMatchForUser(r.Context(), user.ID, otherID); err != nil {
+		h.renderPayMessage(w, "Не удалось удалить", "Попробуйте позже или вернитесь в бот.")
+		return
+	}
+	_ = h.max.SendText(r.Context(), user.PlatformChatID, "Контакт удален из взаимных лайков.", [][]maxapi.Button{
+		{{Text: "📬 Взаимные лайки", Payload: "matches"}},
+		{{Text: "☰ Главное меню", Payload: "main_menu"}},
+	})
+	h.renderPayMessage(w, "Контакт удален", "Вернитесь в бот, чтобы продолжить просмотр.", true)
+}
+
 func displayName(user models.User) string {
 	name := strings.TrimSpace(user.Name)
 	if name != "" {
@@ -150,6 +175,12 @@ func normalizeProfileURL(value string) string {
 		return "https://max.ru/" + strings.TrimPrefix(value, "@")
 	}
 	return value
+}
+
+func parseInt64(value string) (int64, error) {
+	var id int64
+	_, err := fmt.Sscan(strings.TrimSpace(value), &id)
+	return id, err
 }
 
 type yooKassaPayment struct {

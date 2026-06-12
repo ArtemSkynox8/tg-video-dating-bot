@@ -330,6 +330,11 @@ func (r *Repository) HideMatchForUser(ctx context.Context, userID, otherUserID i
 	return err
 }
 
+func (r *Repository) ResetBrowseViews(ctx context.Context, userID int64) error {
+	_, err := r.db.Exec(ctx, `delete from views where viewer_id = $1 and action in ('next', 'like')`, userID)
+	return err
+}
+
 func (r *Repository) CreateUserReport(ctx context.Context, reporterID, reportedUserID, matchID int64, reason string) error {
 	_, err := r.db.Exec(ctx, `
 		insert into user_reports (reporter_id, reported_user_id, match_id, reason)

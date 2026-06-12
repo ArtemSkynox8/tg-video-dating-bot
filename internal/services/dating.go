@@ -157,6 +157,8 @@ func (s *DatingService) HandleCallback(ctx context.Context, cb maxapi.CallbackUp
 	switch parts[0] {
 	case "browse":
 		return s.SendNextCandidate(ctx, *user)
+	case "reset_browse":
+		return s.ResetBrowse(ctx, *user)
 	case "gender":
 		if len(parts) == 2 {
 			return s.SaveGenderStep(ctx, *user, parts[1])
@@ -583,12 +585,22 @@ func (s *DatingService) SendNextCandidate(ctx context.Context, user models.User)
 	candidate, err := s.repo.FindCandidate(ctx, user.ID)
 	if err != nil {
 		if err == repositories.ErrNotFound {
-			return s.max.SendText(ctx, user.PlatformChatID, "Пока нет подходящих видео. Загляните позже.", mainMenuButtons())
+			return s.max.SendText(ctx, user.PlatformChatID, "Кружки закончились. Вернитесь попозже или посмотрите кружки заново.", [][]maxapi.Button{
+				{{Text: "🔁 Посмотреть заново", Payload: "reset_browse"}},
+				{{Text: "☰ Главное меню", Payload: "main_menu"}},
+			})
 		}
 		return err
 	}
 	_, err = s.max.SendMediaToDialogOrUser(ctx, user.PlatformDialogID, user.PlatformChatID, candidate.PlatformMediaID, candidate.Owner.Name, browseButtons(candidate.ID, candidate.Owner.ID))
 	return err
+}
+
+func (s *DatingService) ResetBrowse(ctx context.Context, user models.User) error {
+	if err := s.repo.ResetBrowseViews(ctx, user.ID); err != nil {
+		return err
+	}
+	return s.SendNextCandidate(ctx, user)
 }
 
 func (s *DatingService) HandleBrowseAction(ctx context.Context, user models.User, chatID, messageID, videoIDText, ownerIDText, action string) error {
@@ -703,22 +715,42 @@ func (s *DatingService) SendMatches(ctx context.Context, user models.User) error
 	if len(users) == 0 {
 		return s.max.SendText(ctx, user.PlatformChatID, "У вас пока нет взаимных лайков.", mainMenuButtons())
 	}
-	lines := []string{"📬 Взаимные лайки:", ""}
-	for _, u := range users {
-		parts := []string{displayName(u)}
-		if link := s.matchVideoURL(ctx, u.ID); link != "" {
-			parts = append(parts, "[🎥 Посмотреть кружок]("+link+")")
-		} else {
-			parts = append(parts, "🎥 Кружок недоступен")
-		}
-		if link := profileURL(u); link != "" {
-			parts = append(parts, "[💬 Написать]("+link+")")
-		} else {
-			parts = append(parts, "💬 Ссылка недоступна")
-		}
-		lines = append(lines, strings.Join(parts, " | "))
+	var text strings.Builder
+	links := []maxapi.TextLink{}
+	pos := 0
+	write := func(value string) {
+		text.WriteString(value)
+		pos += len([]rune(value))
 	}
-	return s.max.SendText(ctx, user.PlatformChatID, strings.Join(lines, "\n"), [][]maxapi.Button{
+	writeLink := func(label, link string) {
+		start := pos
+		write(label)
+		links = append(links, maxapi.TextLink{From: start, Length: len([]rune(label)), URL: link})
+	}
+	write("📬 Взаимные лайки:\n\n")
+	for _, u := range users {
+		write(displayName(u))
+		write(" | ")
+		if link := s.matchVideoURL(ctx, u.ID); link != "" {
+			writeLink("🎥 Посмотреть кружок", link)
+		} else {
+			write("🎥 Кружок недоступен")
+		}
+		write(" | ")
+		if link := profileURL(u); link != "" {
+			writeLink("💬 Написать", link)
+		} else {
+			write("💬 Ссылка недоступна")
+		}
+		write(" | ")
+		if link := s.hideMatchURL(user, u.ID); link != "" {
+			writeLink("❌ Удалить", link)
+		} else {
+			write("❌ Удалить недоступно")
+		}
+		write("\n")
+	}
+	return s.max.SendTextWithLinks(ctx, user.PlatformChatID, strings.TrimRight(text.String(), "\n"), links, [][]maxapi.Button{
 		{{Text: "▶️ Продолжить просмотр", Payload: "browse"}},
 		{{Text: "☰ Главное меню", Payload: "main_menu"}},
 	})
@@ -729,7 +761,17 @@ func (s *DatingService) matchVideoURL(ctx context.Context, userID int64) string 
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(video.StorageURL)
+	return normalizePublicURL(s.publicBaseURL, video.StorageURL)
+}
+
+func (s *DatingService) hideMatchURL(user models.User, otherUserID int64) string {
+	if s.publicBaseURL == "" {
+		return ""
+	}
+	query := url.Values{}
+	query.Set("u", user.PlatformUserID)
+	query.Set("m", fmt.Sprint(otherUserID))
+	return s.publicBaseURL + "/matches/hide?" + query.Encode()
 }
 
 func (s *DatingService) SendMatchVideo(ctx context.Context, user models.User, otherUserID int64) error {
@@ -1151,6 +1193,20 @@ func normalizeProfileURL(value string) string {
 	}
 	if strings.HasPrefix(value, "@") {
 		return "https://max.ru/" + strings.TrimPrefix(value, "@")
+	}
+	return value
+}
+
+func normalizePublicURL(baseURL, value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "https://") {
+		return value
+	}
+	if strings.HasPrefix(value, "/") && strings.TrimSpace(baseURL) != "" {
+		return strings.TrimRight(baseURL, "/") + value
 	}
 	return value
 }

@@ -41,6 +41,57 @@ func (c *Client) SendText(ctx context.Context, userID, text string, buttons [][]
 	return c.post(ctx, "/messages?user_id="+url.QueryEscape(userID), body, nil)
 }
 
+func (c *Client) SendTextWithLinks(ctx context.Context, userID, text string, links []TextLink, buttons [][]Button) error {
+	body := map[string]any{
+		"text": text,
+	}
+	if len(links) > 0 {
+		format := make([]map[string]any, 0, len(links))
+		for _, link := range links {
+			format = append(format, map[string]any{
+				"type":   "link",
+				"from":   link.From,
+				"length": link.Length,
+				"url":    link.URL,
+			})
+		}
+		body["format"] = format
+	}
+	if len(buttons) > 0 {
+		body["attachments"] = inlineKeyboard(buttons)
+	}
+	return c.post(ctx, "/messages?user_id="+url.QueryEscape(userID), body, nil)
+}
+
+func (c *Client) SendFormattedText(ctx context.Context, userID, htmlText, plainText string, buttons [][]Button) error {
+	body := map[string]any{
+		"text":   htmlText,
+		"format": "html",
+	}
+	if len(buttons) > 0 {
+		body["attachments"] = inlineKeyboard(buttons)
+	}
+	if err := c.post(ctx, "/messages?user_id="+url.QueryEscape(userID), body, nil); err == nil {
+		return nil
+	} else {
+		log.Printf("send formatted text as html failed: %v", err)
+	}
+	body["format"] = "HTML"
+	if err := c.post(ctx, "/messages?user_id="+url.QueryEscape(userID), body, nil); err == nil {
+		return nil
+	} else {
+		log.Printf("send formatted text as HTML failed: %v", err)
+	}
+	body["parse_mode"] = "HTML"
+	delete(body, "format")
+	if err := c.post(ctx, "/messages?user_id="+url.QueryEscape(userID), body, nil); err == nil {
+		return nil
+	} else {
+		log.Printf("send formatted text as parse_mode HTML failed: %v", err)
+	}
+	return c.SendText(ctx, userID, plainText, buttons)
+}
+
 func (c *Client) SendTextWithID(ctx context.Context, userID, text string, buttons [][]Button) (string, error) {
 	body := map[string]any{
 		"text": text,
