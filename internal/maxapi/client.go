@@ -41,28 +41,6 @@ func (c *Client) SendText(ctx context.Context, userID, text string, buttons [][]
 	return c.post(ctx, "/messages?user_id="+url.QueryEscape(userID), body, nil)
 }
 
-func (c *Client) SendTextWithLinks(ctx context.Context, userID, text string, links []TextLink, buttons [][]Button) error {
-	body := map[string]any{
-		"text": text,
-	}
-	if len(links) > 0 {
-		format := make([]map[string]any, 0, len(links))
-		for _, link := range links {
-			format = append(format, map[string]any{
-				"type":   "link",
-				"from":   link.From,
-				"length": link.Length,
-				"url":    link.URL,
-			})
-		}
-		body["format"] = format
-	}
-	if len(buttons) > 0 {
-		body["attachments"] = inlineKeyboard(buttons)
-	}
-	return c.post(ctx, "/messages?user_id="+url.QueryEscape(userID), body, nil)
-}
-
 func (c *Client) SendFormattedText(ctx context.Context, userID, htmlText, plainText string, buttons [][]Button) error {
 	body := map[string]any{
 		"text":   htmlText,

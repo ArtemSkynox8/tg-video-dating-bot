@@ -73,7 +73,9 @@ func (s *DatingService) HandleMessage(ctx context.Context, msg maxapi.MessageUpd
 		return s.SendMatches(ctx, *user)
 	case text == "/profile":
 		return s.max.SendText(ctx, user.PlatformChatID, "Что хотите изменить?", editProfileButtons())
-	case text == "/subscription" || text == "/premium":
+	case text == "/subscription":
+		return s.SendSubscriptionStatus(ctx, *user)
+	case text == "/premium":
 		return s.SendPremiumOffer(ctx, *user)
 	case strings.HasPrefix(text, "/link "):
 		return s.SaveProfileLink(ctx, *user, strings.TrimSpace(strings.TrimPrefix(text, "/link ")))
@@ -189,6 +191,10 @@ func (s *DatingService) HandleCallback(ctx context.Context, cb maxapi.CallbackUp
 		}
 	case "matches":
 		return s.SendMatches(ctx, *user)
+	case "match_actions":
+		if len(parts) == 2 {
+			return s.SendMatchActions(ctx, *user, parseID(parts[1]))
+		}
 	case "match_video":
 		if len(parts) == 2 {
 			return s.SendMatchVideo(ctx, *user, parseID(parts[1]))
@@ -238,8 +244,10 @@ func (s *DatingService) HandleCallback(ctx context.Context, cb maxapi.CallbackUp
 		return s.SendProfileShareInstructions(ctx, *user)
 	case "main_menu":
 		return s.max.SendText(ctx, cb.Chat.ID, "Главное меню:", mainMenuButtons())
-	case "premium":
-		return s.SendPremiumOffer(ctx, *user)
+	case "premium", "subscription":
+		return s.SendSubscriptionStatus(ctx, *user)
+	case "unsubscribe":
+		return s.SendUnsubscribeStub(ctx, *user)
 	case "missing_profile_link":
 		return s.max.SendText(ctx, cb.Chat.ID, "У этого пользователя пока не добавлена ссылка MAX для личных сообщений. Попросите его отправить боту команду:\n/link https://max.ru/u/...", mainMenuButtons())
 	case "menu_report":
@@ -286,7 +294,7 @@ func (s *DatingService) SendCommands(ctx context.Context, user models.User) erro
 
 func (s *DatingService) SendPremiumOffer(ctx context.Context, user models.User) error {
 	if user.IsPremium {
-		return s.max.SendText(ctx, user.PlatformChatID, "💎 Premium уже активен.\n\nВы можете писать первым без взаимного лайка и смотреть кружки без ограничений.", mainMenuButtons())
+		return s.SendSubscriptionStatus(ctx, user)
 	}
 	offerURL := s.publicBaseURL + "/offer"
 	text := "💎 Premium доступ\n\n" +
@@ -300,12 +308,47 @@ func (s *DatingService) SendPremiumOffer(ctx context.Context, user models.User) 
 		{{Text: "💎 Оплатить Premium доступ", URL: s.premiumPaymentURL(user)}},
 		{{Text: "▶️ Продолжить просмотр", Payload: "browse"}},
 		{{Text: "📄 Оферта", URL: offerURL}},
+		{{Text: "🚫 Отписаться", Payload: "unsubscribe"}},
 		{{Text: "☰ Главное меню", Payload: "main_menu"}},
 	})
 	if err != nil {
 		return err
 	}
 	return s.repo.UpdatePremiumOfferMessage(ctx, user.ID, user.PlatformChatID, messageID)
+}
+
+func (s *DatingService) SendSubscriptionStatus(ctx context.Context, user models.User) error {
+	if !user.IsPremium {
+		return s.SendSubscriptionOffer(ctx, user)
+	}
+	text := "💎 Подписка\n\n" +
+		"Статус: активна.\n\n" +
+		"Следующее списание: будет показано после подключения магазина.\n\n" +
+		"Premium дает доступ к контактам пользователей, возможность писать первым без взаимного лайка и неограниченный просмотр кружков."
+	return s.max.SendText(ctx, user.PlatformChatID, text, subscriptionStatusButtons())
+}
+
+func (s *DatingService) SendSubscriptionOffer(ctx context.Context, user models.User) error {
+	offerURL := s.publicBaseURL + "/offer"
+	text := "💎 Подписка Premium\n\n" +
+		"Стоимость: " + s.premiumPriceText() + ".\n\n" +
+		"Что входит:\n" +
+		"• доступ к контактам пользователей;\n" +
+		"• возможность писать первым без взаимного лайка;\n" +
+		"• неограниченный просмотр кружков.\n\n" +
+		"Нажимая кнопку подписки, вы соглашаетесь с условиями оферты."
+	return s.max.SendText(ctx, user.PlatformChatID, text, [][]maxapi.Button{
+		{{Text: "💎 Подписаться", URL: s.premiumPaymentURL(user)}},
+		{{Text: "📄 Оферта", URL: offerURL}},
+		{{Text: "☰ Главное меню", Payload: "main_menu"}},
+	})
+}
+
+func (s *DatingService) SendUnsubscribeStub(ctx context.Context, user models.User) error {
+	return s.max.SendText(ctx, user.PlatformChatID, "Отписка пока работает в ручном режиме. Когда подключим реальный магазин и автосписания, эта кнопка будет отключать продление автоматически.", [][]maxapi.Button{
+		{{Text: "💎 Подписка", Payload: "subscription"}},
+		{{Text: "☰ Главное меню", Payload: "main_menu"}},
+	})
 }
 
 func (s *DatingService) SendRecordPrompt(ctx context.Context, user models.User, text string) error {
@@ -715,45 +758,17 @@ func (s *DatingService) SendMatches(ctx context.Context, user models.User) error
 	if len(users) == 0 {
 		return s.max.SendText(ctx, user.PlatformChatID, "У вас пока нет взаимных лайков.", mainMenuButtons())
 	}
-	var text strings.Builder
-	links := []maxapi.TextLink{}
-	pos := 0
-	write := func(value string) {
-		text.WriteString(value)
-		pos += len([]rune(value))
-	}
-	writeLink := func(label, link string) {
-		start := pos
-		write(label)
-		links = append(links, maxapi.TextLink{From: start, Length: len([]rune(label)), URL: link})
-	}
-	write("📬 Взаимные лайки:\n\n")
+	lines := []string{"📬 Взаимные лайки:", ""}
+	buttons := [][]maxapi.Button{}
 	for _, u := range users {
-		write(displayName(u))
-		write(" | ")
-		if link := s.matchVideoURL(ctx, u.ID); link != "" {
-			writeLink("🎥 Посмотреть кружок", link)
-		} else {
-			write("🎥 Кружок недоступен")
-		}
-		write(" | ")
-		if link := profileURL(u); link != "" {
-			writeLink("💬 Написать", link)
-		} else {
-			write("💬 Ссылка недоступна")
-		}
-		write(" | ")
-		if link := s.hideMatchURL(user, u.ID); link != "" {
-			writeLink("❌ Удалить", link)
-		} else {
-			write("❌ Удалить недоступно")
-		}
-		write("\n")
+		lines = append(lines, displayName(u)+" | 🎥 Посмотреть кружок | 💬 Написать | ❌ Удалить")
+		buttons = append(buttons, []maxapi.Button{{Text: "⚙️ " + shortName(u.Name), Payload: fmt.Sprintf("match_actions:%d", u.ID)}})
 	}
-	return s.max.SendTextWithLinks(ctx, user.PlatformChatID, strings.TrimRight(text.String(), "\n"), links, [][]maxapi.Button{
+	buttons = append(buttons,
 		{{Text: "▶️ Продолжить просмотр", Payload: "browse"}},
 		{{Text: "☰ Главное меню", Payload: "main_menu"}},
-	})
+	)
+	return s.max.SendText(ctx, user.PlatformChatID, strings.Join(lines, "\n"), buttons)
 }
 
 func (s *DatingService) matchVideoURL(ctx context.Context, userID int64) string {
@@ -772,6 +787,40 @@ func (s *DatingService) hideMatchURL(user models.User, otherUserID int64) string
 	query.Set("u", user.PlatformUserID)
 	query.Set("m", fmt.Sprint(otherUserID))
 	return s.publicBaseURL + "/matches/hide?" + query.Encode()
+}
+
+func (s *DatingService) SendMatchActions(ctx context.Context, user models.User, otherUserID int64) error {
+	if otherUserID == 0 {
+		return nil
+	}
+	other, err := s.repo.GetUserByID(ctx, otherUserID)
+	if err != nil {
+		return err
+	}
+	if _, err := s.repo.FindVisibleMatch(ctx, user.ID, otherUserID); err != nil {
+		return s.max.SendText(ctx, user.PlatformChatID, "Этот контакт недоступен.", mainMenuButtons())
+	}
+	buttons := [][]maxapi.Button{}
+	if link := s.matchVideoURL(ctx, otherUserID); link != "" {
+		buttons = append(buttons, []maxapi.Button{{Text: "🎥 Посмотреть кружок", URL: link}})
+	} else {
+		buttons = append(buttons, []maxapi.Button{{Text: "🎥 Посмотреть кружок", Payload: fmt.Sprintf("match_video:%d", otherUserID)}})
+	}
+	if link := profileURL(*other); link != "" {
+		buttons = append(buttons, []maxapi.Button{{Text: "💬 Написать", URL: link}})
+	} else {
+		buttons = append(buttons, []maxapi.Button{{Text: "💬 Ссылка недоступна", Payload: "missing_profile_link"}})
+	}
+	if link := s.hideMatchURL(user, otherUserID); link != "" {
+		buttons = append(buttons, []maxapi.Button{{Text: "❌ Удалить", URL: link}})
+	} else {
+		buttons = append(buttons, []maxapi.Button{{Text: "❌ Удалить", Payload: fmt.Sprintf("hide_match:%d", otherUserID)}})
+	}
+	buttons = append(buttons,
+		[]maxapi.Button{{Text: "📬 Взаимные лайки", Payload: "matches"}},
+		[]maxapi.Button{{Text: "☰ Главное меню", Payload: "main_menu"}},
+	)
+	return s.max.SendText(ctx, user.PlatformChatID, "Действия для контакта: "+displayName(*other), buttons)
 }
 
 func (s *DatingService) SendMatchVideo(ctx context.Context, user models.User, otherUserID int64) error {
@@ -1366,5 +1415,12 @@ func mainMenuButtons() [][]maxapi.Button {
 			{Text: "🚨 Пожаловаться", Payload: "menu_report"},
 			{Text: "💎 Подписка", Payload: "premium"},
 		},
+	}
+}
+
+func subscriptionStatusButtons() [][]maxapi.Button {
+	return [][]maxapi.Button{
+		{{Text: "🚫 Отписаться", Payload: "unsubscribe"}},
+		{{Text: "☰ Главное меню", Payload: "main_menu"}},
 	}
 }
