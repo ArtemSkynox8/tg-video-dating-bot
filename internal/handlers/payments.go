@@ -37,6 +37,7 @@ func (h *PaymentHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /offer", h.offer)
 	mux.HandleFunc("GET /pay", h.pay)
 	mux.HandleFunc("GET /pay/success", h.success)
+	mux.HandleFunc("GET /matches/video", h.matchVideo)
 	mux.HandleFunc("GET /matches/hide", h.hideMatch)
 }
 
@@ -152,6 +153,45 @@ func (h *PaymentHandler) hideMatch(w http.ResponseWriter, r *http.Request) {
 	h.renderPayMessage(w, "Контакт удален", "Вернитесь в бот, чтобы продолжить просмотр.", true)
 }
 
+func (h *PaymentHandler) matchVideo(w http.ResponseWriter, r *http.Request) {
+	platformUserID := strings.TrimSpace(r.URL.Query().Get("u"))
+	matchID := strings.TrimSpace(r.URL.Query().Get("m"))
+	user, err := h.repo.GetUserByPlatformID(r.Context(), platformUserID)
+	if err != nil {
+		h.renderPayMessage(w, "Не удалось открыть кружок", "Вернитесь в бот и попробуйте открыть список взаимных лайков заново.")
+		return
+	}
+	otherID, err := parseInt64(matchID)
+	if err != nil || otherID == 0 {
+		h.renderPayMessage(w, "Не удалось открыть кружок", "Ссылка на кружок некорректна.")
+		return
+	}
+	if _, err := h.repo.FindVisibleMatch(r.Context(), user.ID, otherID); err != nil {
+		h.renderPayMessage(w, "Кружок недоступен", "Этот контакт больше недоступен в списке взаимных лайков.")
+		return
+	}
+	other, err := h.repo.GetUserByID(r.Context(), otherID)
+	if err != nil {
+		h.renderPayMessage(w, "Не удалось открыть кружок", "Вернитесь в бот и попробуйте позже.")
+		return
+	}
+	video, err := h.repo.GetActiveVideoByUser(r.Context(), otherID)
+	if err != nil {
+		h.renderPayMessage(w, "Кружок недоступен", "У этого контакта нет активного кружка.")
+		return
+	}
+	messageID, err := h.max.SendMediaToDialogOrUser(r.Context(), user.PlatformDialogID, user.PlatformChatID, video.PlatformMediaID, displayName(*other), matchVideoButtons(*other))
+	if err != nil {
+		h.renderPayMessage(w, "Не удалось отправить кружок", "Вернитесь в бот и попробуйте позже.")
+		return
+	}
+	go func(chatID, mid string) {
+		time.Sleep(60 * time.Second)
+		_ = h.max.DeleteMessage(context.Background(), chatID, mid)
+	}(user.PlatformChatID, messageID)
+	h.renderPayMessage(w, "Кружок отправлен", "Мы отправили кружок в чат бота.", true)
+}
+
 func displayName(user models.User) string {
 	name := strings.TrimSpace(user.Name)
 	if name != "" {
@@ -175,6 +215,23 @@ func normalizeProfileURL(value string) string {
 		return "https://max.ru/" + strings.TrimPrefix(value, "@")
 	}
 	return value
+}
+
+func matchVideoButtons(other models.User) [][]maxapi.Button {
+	buttons := [][]maxapi.Button{}
+	if link := normalizeProfileURL(other.ProfileLink); link != "" {
+		buttons = append(buttons, []maxapi.Button{{Text: "💬 Написать", URL: link}})
+	} else {
+		buttons = append(buttons, []maxapi.Button{{Text: "💬 Ссылка недоступна", Payload: "missing_profile_link"}})
+	}
+	buttons = append(buttons,
+		[]maxapi.Button{{Text: "▶️ Продолжить просмотр", Payload: "browse"}},
+		[]maxapi.Button{
+			{Text: "🚨 Пожаловаться", Payload: fmt.Sprintf("report_user:%d", other.ID)},
+			{Text: "☰ Меню", Payload: "main_menu"},
+		},
+	)
+	return buttons
 }
 
 func parseInt64(value string) (int64, error) {
