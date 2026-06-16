@@ -143,6 +143,38 @@ func (r *Repository) SaveVideo(ctx context.Context, userID int64, mediaID, stora
 	return tx.Commit(ctx)
 }
 
+func (r *Repository) UpsertFakeVideoUser(ctx context.Context, platformUserID, name, gender, mediaID, storageURL string, duration int) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var userID int64
+	err = tx.QueryRow(ctx, `
+		insert into users (platform_user_id, platform_chat_id, platform_dialog_id, username, name, gender, preferred_gender, flow_state, status)
+		values ($1, $1, '', $1, $2, $3, 'any', '', 'active')
+		on conflict (platform_user_id) do update set
+			name = excluded.name,
+			gender = excluded.gender,
+			preferred_gender = excluded.preferred_gender,
+			status = 'active',
+			updated_at = now()
+		returning id`, platformUserID, name, gender).Scan(&userID)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `update videos set is_active = false where user_id = $1`, userID); err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `
+		insert into videos (user_id, platform_media_id, storage_url, duration, is_active)
+		values ($1, $2, nullif($3, ''), $4, true)`, userID, mediaID, storageURL, duration)
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 func (r *Repository) SavePendingVideo(ctx context.Context, userID int64, mediaID, storageURL string, duration int) (int64, error) {
 	var id int64
 	err := r.db.QueryRow(ctx, `

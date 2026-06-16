@@ -24,6 +24,7 @@ type Config struct {
 	PremiumPrice              string
 	ContactInstructionVideoID string
 	ContactInstructionVideoPath string
+	FakeCirclesDir            string
 	FortuneWheelVideoID       string
 	FortuneWheelVideoPath     string
 }
@@ -48,6 +49,7 @@ func Load() Config {
 		PremiumPrice:              getEnv("PREMIUM_PRICE", "199.00"),
 		ContactInstructionVideoID: os.Getenv("CONTACT_INSTRUCTION_VIDEO_ID"),
 		ContactInstructionVideoPath: getEnv("CONTACT_INSTRUCTION_VIDEO_PATH", "assets/contact-instruction/instruction.mp4"),
+		FakeCirclesDir:            getEnv("FAKE_CIRCLES_DIR", "assets/fake-circles"),
 		FortuneWheelVideoID:       os.Getenv("FORTUNE_WHEEL_VIDEO_ID"),
 		FortuneWheelVideoPath:     getEnv("FORTUNE_WHEEL_VIDEO_PATH", "assets/fortune-wheel/wheel.mp4"),
 	}

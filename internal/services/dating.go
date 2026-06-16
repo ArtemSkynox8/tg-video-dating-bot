@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -28,6 +29,22 @@ import (
 
 const matchesPageSize = 10
 
+type fakeCircleSeed struct {
+	ID       string
+	Name     string
+	Gender   string
+	Filename string
+}
+
+var fakeCircleSeeds = []fakeCircleSeed{
+	{ID: "fake_circle_01", Name: "Артем", Gender: models.GenderMale, Filename: "fake-01-male.mp4"},
+	{ID: "fake_circle_02", Name: "Дима", Gender: models.GenderMale, Filename: "fake-02-male.mp4"},
+	{ID: "fake_circle_03", Name: "Аня", Gender: models.GenderFemale, Filename: "fake-03-female.mp4"},
+	{ID: "fake_circle_04", Name: "Катя", Gender: models.GenderFemale, Filename: "fake-04-female.mp4"},
+	{ID: "fake_circle_05", Name: "Лера", Gender: models.GenderFemale, Filename: "fake-05-female.mp4"},
+	{ID: "fake_circle_06", Name: "Маша", Gender: models.GenderFemale, Filename: "fake-06-female.mp4"},
+}
+
 type DatingService struct {
 	repo                      *repositories.Repository
 	max                       *maxapi.Client
@@ -37,6 +54,7 @@ type DatingService struct {
 	premiumPrice              string
 	contactInstructionVideoID string
 	contactInstructionVideoPath  string
+	fakeCirclesDir               string
 	contactInstructionVideoToken string
 	contactInstructionVideoMu    sync.Mutex
 	fortuneWheelVideoID          string
@@ -47,8 +65,37 @@ type DatingService struct {
 	forwardsMu                sync.RWMutex
 }
 
-func NewDatingService(repo *repositories.Repository, max *maxapi.Client, adminIDs []string, publicBaseURL, returnToBotURL, premiumPrice, contactInstructionVideoID, contactInstructionVideoPath, fortuneWheelVideoID, fortuneWheelVideoPath string) *DatingService {
-	return &DatingService{repo: repo, max: max, adminIDs: adminIDs, publicBaseURL: strings.TrimRight(publicBaseURL, "/"), returnToBotURL: strings.TrimSpace(returnToBotURL), premiumPrice: premiumPrice, contactInstructionVideoID: strings.TrimSpace(contactInstructionVideoID), contactInstructionVideoPath: strings.TrimSpace(contactInstructionVideoPath), fortuneWheelVideoID: strings.TrimSpace(fortuneWheelVideoID), fortuneWheelVideoPath: strings.TrimSpace(fortuneWheelVideoPath), forwards: map[string]maxapi.ForwardInfo{}}
+func NewDatingService(repo *repositories.Repository, max *maxapi.Client, adminIDs []string, publicBaseURL, returnToBotURL, premiumPrice, contactInstructionVideoID, contactInstructionVideoPath, fakeCirclesDir, fortuneWheelVideoID, fortuneWheelVideoPath string) *DatingService {
+	return &DatingService{repo: repo, max: max, adminIDs: adminIDs, publicBaseURL: strings.TrimRight(publicBaseURL, "/"), returnToBotURL: strings.TrimSpace(returnToBotURL), premiumPrice: premiumPrice, contactInstructionVideoID: strings.TrimSpace(contactInstructionVideoID), contactInstructionVideoPath: strings.TrimSpace(contactInstructionVideoPath), fakeCirclesDir: strings.TrimSpace(fakeCirclesDir), fortuneWheelVideoID: strings.TrimSpace(fortuneWheelVideoID), fortuneWheelVideoPath: strings.TrimSpace(fortuneWheelVideoPath), forwards: map[string]maxapi.ForwardInfo{}}
+}
+
+func (s *DatingService) SeedFakeCircles(ctx context.Context) {
+	dir := s.fakeCirclesDir
+	if dir == "" {
+		return
+	}
+	for _, seed := range fakeCircleSeeds {
+		videoPath := filepath.Join(dir, seed.Filename)
+		if _, err := os.Stat(videoPath); err != nil {
+			log.Printf("fake circle missing id=%s path=%s: %v", seed.ID, videoPath, err)
+			continue
+		}
+		if user, err := s.repo.GetUserByPlatformID(ctx, seed.ID); err == nil {
+			if video, err := s.repo.GetActiveVideoByUser(ctx, user.ID); err == nil && video.StorageURL == videoPath && video.PlatformMediaID != "" {
+				continue
+			}
+		}
+		token, err := s.max.UploadVideo(ctx, videoPath)
+		if err != nil {
+			log.Printf("upload fake circle id=%s path=%s: %v", seed.ID, videoPath, err)
+			continue
+		}
+		if err := s.repo.UpsertFakeVideoUser(ctx, seed.ID, seed.Name, seed.Gender, token, videoPath, 0); err != nil {
+			log.Printf("save fake circle id=%s path=%s: %v", seed.ID, videoPath, err)
+			continue
+		}
+		log.Printf("fake circle seeded id=%s path=%s", seed.ID, videoPath)
+	}
 }
 
 func (s *DatingService) HandleMessage(ctx context.Context, msg maxapi.MessageUpdate) error {
@@ -184,11 +231,11 @@ func (s *DatingService) HandleCallback(ctx context.Context, cb maxapi.CallbackUp
 			if parts[0] == "like" {
 				action = models.ActionLike
 			}
-			return s.HandleBrowseAction(ctx, *user, cb.Chat.ID, cb.MessageID, parts[1], parts[2], action)
+			return s.HandleBrowseAction(ctx, *user, cb.Chat.ID, cb.MessageID, cb.CallbackID, parts[1], parts[2], action)
 		}
 	case "like_only":
 		if len(parts) == 3 {
-			return s.HandleLikeOnly(ctx, *user, cb.Chat.ID, cb.MessageID, parts[1], parts[2])
+			return s.HandleLikeOnly(ctx, *user, cb.Chat.ID, cb.MessageID, cb.CallbackID, parts[1], parts[2])
 		}
 	case "report":
 		if len(parts) == 3 {
@@ -742,12 +789,11 @@ func (s *DatingService) ResetBrowse(ctx context.Context, user models.User) error
 	return s.SendNextCandidate(ctx, user)
 }
 
-func (s *DatingService) HandleBrowseAction(ctx context.Context, user models.User, chatID, messageID, videoIDText, ownerIDText, action string) error {
+func (s *DatingService) HandleBrowseAction(ctx context.Context, user models.User, chatID, messageID, callbackID, videoIDText, ownerIDText, action string) error {
 	videoID, ownerID := parseID(videoIDText), parseID(ownerIDText)
 	if videoID == 0 || ownerID == 0 {
 		return nil
 	}
-	_ = s.max.DeleteMessage(ctx, chatID, messageID)
 	if err := s.repo.CreateView(ctx, user.ID, videoID, ownerID, action); err != nil {
 		return err
 	}
@@ -759,11 +805,22 @@ func (s *DatingService) HandleBrowseAction(ctx context.Context, user models.User
 		if err != nil {
 			return err
 		}
+		if owner.IsFake() {
+			createdLike, err := s.repo.CreateLike(ctx, user.ID, ownerID)
+			if err != nil {
+				return err
+			}
+			if createdLike {
+				s.NotifyAdminEvent(ctx, user, "Поставил лайк", fmt.Sprintf("Target: %d", ownerID))
+			}
+			return s.ackLikeAndShowNext(ctx, user, chatID, messageID, callbackID)
+		}
 		reverse, err := s.repo.HasReverseLike(ctx, user.ID, ownerID)
 		if err != nil {
 			return err
 		}
 		if !reverse && !user.IsPremium {
+			_ = s.max.DeleteMessage(ctx, chatID, messageID)
 			return s.SendPremiumOfferV2(ctx, user)
 		}
 		createdLike, err := s.repo.CreateLike(ctx, user.ID, ownerID)
@@ -777,6 +834,7 @@ func (s *DatingService) HandleBrowseAction(ctx context.Context, user models.User
 			return err
 		}
 		if reverse {
+			_ = s.max.DeleteMessage(ctx, chatID, messageID)
 			if err := s.repo.CreateMatch(ctx, user.ID, ownerID); err != nil {
 				return err
 			}
@@ -785,17 +843,18 @@ func (s *DatingService) HandleBrowseAction(ctx context.Context, user models.User
 			}
 			return s.sendContactAccess(ctx, chatID, "❤️ У вас новый взаимный лайк!", *owner, true)
 		}
+		_ = s.max.DeleteMessage(ctx, chatID, messageID)
 		return s.sendContactAccess(ctx, chatID, "💎 Premium: контакт открыт без взаимного лайка.", *owner, false)
 	}
+	_ = s.max.DeleteMessage(ctx, chatID, messageID)
 	return s.SendNextCandidate(ctx, user)
 }
 
-func (s *DatingService) HandleLikeOnly(ctx context.Context, user models.User, chatID, messageID, videoIDText, ownerIDText string) error {
+func (s *DatingService) HandleLikeOnly(ctx context.Context, user models.User, chatID, messageID, callbackID, videoIDText, ownerIDText string) error {
 	videoID, ownerID := parseID(videoIDText), parseID(ownerIDText)
 	if videoID == 0 || ownerID == 0 {
 		return nil
 	}
-	_ = s.max.DeleteMessage(ctx, chatID, messageID)
 	if err := s.repo.CreateView(ctx, user.ID, videoID, ownerID, models.ActionLike); err != nil {
 		return err
 	}
@@ -809,6 +868,13 @@ func (s *DatingService) HandleLikeOnly(ctx context.Context, user models.User, ch
 	if createdLike {
 		s.NotifyAdminEvent(ctx, user, "Поставил лайк", fmt.Sprintf("Target: %d", ownerID))
 	}
+	owner, err := s.repo.GetUserByID(ctx, ownerID)
+	if err != nil {
+		return err
+	}
+	if owner.IsFake() {
+		return s.ackLikeAndShowNext(ctx, user, chatID, messageID, callbackID)
+	}
 	if err := s.repo.EnqueuePriority(ctx, ownerID, user.ID); err != nil {
 		return err
 	}
@@ -817,10 +883,7 @@ func (s *DatingService) HandleLikeOnly(ctx context.Context, user models.User, ch
 		return err
 	}
 	if reverse {
-		owner, err := s.repo.GetUserByID(ctx, ownerID)
-		if err != nil {
-			return err
-		}
+		_ = s.max.DeleteMessage(ctx, chatID, messageID)
 		if err := s.repo.CreateMatch(ctx, user.ID, ownerID); err != nil {
 			return err
 		}
@@ -828,6 +891,19 @@ func (s *DatingService) HandleLikeOnly(ctx context.Context, user models.User, ch
 			return err
 		}
 		return s.sendContactAccess(ctx, chatID, "❤️ У вас новый взаимный лайк!", *owner, true)
+	}
+	return s.ackLikeAndShowNext(ctx, user, chatID, messageID, callbackID)
+}
+
+func (s *DatingService) ackLikeAndShowNext(ctx context.Context, user models.User, chatID, messageID, callbackID string) error {
+	if callbackID != "" {
+		_ = s.max.AnswerCallback(ctx, callbackID, "❤️")
+	}
+	heartMessageID, _ := s.max.SendTextWithID(ctx, user.PlatformChatID, "❤️", nil)
+	time.Sleep(time.Second)
+	_ = s.max.DeleteMessage(ctx, chatID, messageID)
+	if heartMessageID != "" {
+		_ = s.max.DeleteMessage(ctx, user.PlatformChatID, heartMessageID)
 	}
 	return s.SendNextCandidate(ctx, user)
 }

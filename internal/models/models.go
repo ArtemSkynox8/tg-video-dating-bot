@@ -2,6 +2,8 @@ package models
 
 import "time"
 
+const FakePlatformUserPrefix = "fake_circle_"
+
 type User struct {
 	ID             int64
 	PlatformUserID string
@@ -24,6 +26,10 @@ type User struct {
 	PremiumOfferMessageID string
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
+}
+
+func (u User) IsFake() bool {
+	return len(u.PlatformUserID) >= len(FakePlatformUserPrefix) && u.PlatformUserID[:len(FakePlatformUserPrefix)] == FakePlatformUserPrefix
 }
 
 type Video struct {
