@@ -120,10 +120,30 @@ create table if not exists premium_payments (
     provider text not null,
     external_id text,
     status text not null,
+    plan text,
+    period_days integer not null default 7,
+    payment_method_id text,
+    reason text not null default 'initial',
     created_at timestamptz not null default now()
 );
 
 alter table premium_payments add column if not exists external_id text;
+alter table premium_payments add column if not exists plan text;
+alter table premium_payments add column if not exists period_days integer not null default 7;
+alter table premium_payments add column if not exists payment_method_id text;
+alter table premium_payments add column if not exists reason text not null default 'initial';
+
+create table if not exists premium_subscriptions (
+    user_id bigint primary key references users(id) on delete cascade,
+    plan text not null,
+    amount numeric(12, 2) not null,
+    period_days integer not null,
+    payment_method_id text,
+    active boolean not null default true,
+    current_period_until timestamptz not null,
+    next_charge_at timestamptz not null,
+    updated_at timestamptz not null default now()
+);
 
 create table if not exists referral_contact_opens (
     id bigserial primary key,
@@ -151,6 +171,7 @@ create index if not exists priority_queue_target_idx on priority_queue(target_us
 create index if not exists video_reports_reported_idx on video_reports(reported_user_id, created_at);
 create index if not exists premium_payments_user_status_idx on premium_payments(user_id, status, created_at desc);
 create index if not exists premium_payments_external_idx on premium_payments(external_id);
+create index if not exists premium_subscriptions_due_idx on premium_subscriptions(active, next_charge_at);
 create index if not exists users_referrer_idx on users(referrer_user_id);
 create index if not exists referral_contact_opens_user_idx on referral_contact_opens(user_id, created_at desc);
 `

@@ -114,7 +114,9 @@ func initializeBot(ctx context.Context, cfg config.Config, webhook *dynamicWebho
 	webhook.Set(handlers.NewWebhookHandler(cfg, botService))
 	miniMux := http.NewServeMux()
 	handlers.NewMiniAppHandler(cfg, repo, maxClient).Register(miniMux)
-	handlers.NewPaymentHandler(cfg, repo, maxClient).Register(miniMux)
+	paymentHandler := handlers.NewPaymentHandler(cfg, repo, maxClient)
+	paymentHandler.Register(miniMux)
+	paymentHandler.StartAutorenew(ctx)
 	miniapp.Set(miniMux)
 	log.Printf("bot services initialized")
 

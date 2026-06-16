@@ -41,6 +41,25 @@ type Candidate struct {
 	Owner User
 }
 
+type PremiumPayment struct {
+	ExternalID      string
+	Status          string
+	Plan            string
+	Amount          string
+	PeriodDays      int
+	PaymentMethodID string
+}
+
+type PremiumSubscription struct {
+	User            User
+	Plan            string
+	Amount          string
+	PeriodDays      int
+	PaymentMethodID string
+	CurrentPeriodUntil time.Time
+	NextChargeAt    time.Time
+}
+
 const (
 	StatusActive     = "active"
 	StatusBlocked    = "blocked"

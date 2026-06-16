@@ -98,7 +98,23 @@ create table premium_payments (
     provider text not null,
     external_id text,
     status text not null,
+    plan text,
+    period_days integer not null default 7,
+    payment_method_id text,
+    reason text not null default 'initial',
     created_at timestamptz not null default now()
+);
+
+create table premium_subscriptions (
+    user_id bigint primary key references users(id) on delete cascade,
+    plan text not null,
+    amount numeric(12, 2) not null,
+    period_days integer not null,
+    payment_method_id text,
+    active boolean not null default true,
+    current_period_until timestamptz not null,
+    next_charge_at timestamptz not null,
+    updated_at timestamptz not null default now()
 );
 
 create table referral_contact_opens (
@@ -127,5 +143,6 @@ create index priority_queue_target_idx on priority_queue(target_user_id, expires
 create index video_reports_reported_idx on video_reports(reported_user_id, created_at);
 create index premium_payments_user_status_idx on premium_payments(user_id, status, created_at desc);
 create index premium_payments_external_idx on premium_payments(external_id);
+create index premium_subscriptions_due_idx on premium_subscriptions(active, next_charge_at);
 create index users_referrer_idx on users(referrer_user_id);
 create index referral_contact_opens_user_idx on referral_contact_opens(user_id, created_at desc);

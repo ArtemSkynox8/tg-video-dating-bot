@@ -581,39 +581,152 @@ func (r *Repository) ListUsers(ctx context.Context, limit int) ([]models.User, e
 	return users, rows.Err()
 }
 
-func (r *Repository) CreatePremiumPayment(ctx context.Context, userID int64, amount, provider, status, externalID string) error {
+func (r *Repository) CreatePremiumPayment(ctx context.Context, userID int64, amount, provider, status, externalID, plan string, periodDays int, paymentMethodID, reason string) error {
+	if periodDays == 0 {
+		periodDays = 7
+	}
+	if reason == "" {
+		reason = "initial"
+	}
 	_, err := r.db.Exec(ctx, `
-		insert into premium_payments (user_id, amount, provider, status, external_id)
-		values ($1, $2::numeric, $3, $4, nullif($5, ''))`,
-		userID, amount, provider, status, externalID)
+		insert into premium_payments (user_id, amount, provider, status, external_id, plan, period_days, payment_method_id, reason)
+		values ($1, $2::numeric, $3, $4, nullif($5, ''), nullif($6, ''), $7, nullif($8, ''), $9)`,
+		userID, amount, provider, status, externalID, plan, periodDays, paymentMethodID, reason)
 	return err
 }
 
-func (r *Repository) LatestPremiumPayment(ctx context.Context, userID int64) (string, string, error) {
-	var externalID, status string
+func (r *Repository) LatestPremiumPayment(ctx context.Context, userID int64) (*models.PremiumPayment, error) {
+	var payment models.PremiumPayment
 	err := r.db.QueryRow(ctx, `
-		select coalesce(external_id, ''), status
+		select coalesce(external_id, ''), status, coalesce(plan, ''), amount::text, period_days, coalesce(payment_method_id, '')
 		from premium_payments
 		where user_id = $1 and provider = 'yookassa'
 		order by created_at desc
-		limit 1`, userID).Scan(&externalID, &status)
+		limit 1`, userID).Scan(&payment.ExternalID, &payment.Status, &payment.Plan, &payment.Amount, &payment.PeriodDays, &payment.PaymentMethodID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return "", "", ErrNotFound
+			return nil, ErrNotFound
 		}
-		return "", "", err
+		return nil, err
 	}
-	return externalID, status, nil
+	return &payment, nil
 }
 
-func (r *Repository) UpdatePremiumPaymentStatus(ctx context.Context, externalID, status string) error {
-	_, err := r.db.Exec(ctx, `update premium_payments set status = $2 where external_id = $1`, externalID, status)
+func (r *Repository) GetPremiumPaymentByExternalID(ctx context.Context, externalID string) (*models.PremiumPayment, int64, error) {
+	var payment models.PremiumPayment
+	var userID int64
+	err := r.db.QueryRow(ctx, `
+		select user_id, coalesce(external_id, ''), status, coalesce(plan, ''), amount::text, period_days, coalesce(payment_method_id, '')
+		from premium_payments
+		where provider = 'yookassa' and external_id = $1
+		order by created_at desc
+		limit 1`, externalID).Scan(&userID, &payment.ExternalID, &payment.Status, &payment.Plan, &payment.Amount, &payment.PeriodDays, &payment.PaymentMethodID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, 0, ErrNotFound
+		}
+		return nil, 0, err
+	}
+	return &payment, userID, nil
+}
+
+func (r *Repository) UpdatePremiumPaymentStatus(ctx context.Context, externalID, status, paymentMethodID string) error {
+	_, err := r.db.Exec(ctx, `
+		update premium_payments
+		set status = $2,
+		    payment_method_id = coalesce(nullif($3, ''), payment_method_id)
+		where external_id = $1`, externalID, status, paymentMethodID)
 	return err
 }
 
 func (r *Repository) SetPremium(ctx context.Context, userID int64) error {
 	_, err := r.db.Exec(ctx, `update users set is_premium = true, updated_at = now() where id = $1`, userID)
 	return err
+}
+
+func (r *Repository) SetPremiumSubscription(ctx context.Context, userID int64, plan, amount string, periodDays int, paymentMethodID string, until time.Time) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `update users set is_premium = true, updated_at = now() where id = $1`, userID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		insert into premium_subscriptions (user_id, plan, amount, period_days, payment_method_id, active, current_period_until, next_charge_at, updated_at)
+		values ($1, $2, $3::numeric, $4, nullif($5, ''), true, $6, $6, now())
+		on conflict (user_id) do update set
+			plan = excluded.plan,
+			amount = excluded.amount,
+			period_days = excluded.period_days,
+			payment_method_id = coalesce(excluded.payment_method_id, premium_subscriptions.payment_method_id),
+			active = true,
+			current_period_until = excluded.current_period_until,
+			next_charge_at = excluded.next_charge_at,
+			updated_at = now()`,
+		userID, plan, amount, periodDays, paymentMethodID, until); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (r *Repository) ListDuePremiumSubscriptions(ctx context.Context, limit int) ([]models.PremiumSubscription, error) {
+	rows, err := r.db.Query(ctx, `
+		select u.id, u.platform_user_id, u.platform_chat_id, coalesce(u.platform_dialog_id, ''), coalesce(u.profile_link, ''), coalesce(u.contact_phone, ''), coalesce(u.username, ''),
+		       coalesce(u.name, ''), coalesce(u.gender, ''), coalesce(u.preferred_gender, ''), coalesce(u.flow_state, ''), u.is_premium,
+		       u.referrer_user_id, u.referral_contact_credits, u.referral_rewarded_at, u.status, u.restricted_until, coalesce(u.premium_offer_chat_id, ''), coalesce(u.premium_offer_message_id, ''), u.created_at, u.updated_at,
+		       ps.plan, ps.amount::text, ps.period_days, coalesce(ps.payment_method_id, ''), ps.current_period_until, ps.next_charge_at
+		from premium_subscriptions ps
+		join users u on u.id = ps.user_id
+		where ps.active = true
+		  and ps.payment_method_id is not null
+		  and ps.next_charge_at <= now()
+		order by ps.next_charge_at asc
+		limit $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []models.PremiumSubscription{}
+	for rows.Next() {
+		var sub models.PremiumSubscription
+		if err := rows.Scan(&sub.User.ID, &sub.User.PlatformUserID, &sub.User.PlatformChatID, &sub.User.PlatformDialogID, &sub.User.ProfileLink, &sub.User.ContactPhone, &sub.User.Username,
+			&sub.User.Name, &sub.User.Gender, &sub.User.PreferredGender, &sub.User.FlowState, &sub.User.IsPremium,
+			&sub.User.ReferrerUserID, &sub.User.ReferralContactCredits, &sub.User.ReferralRewardedAt,
+			&sub.User.Status, &sub.User.RestrictedUntil, &sub.User.PremiumOfferChatID, &sub.User.PremiumOfferMessageID, &sub.User.CreatedAt, &sub.User.UpdatedAt,
+			&sub.Plan, &sub.Amount, &sub.PeriodDays, &sub.PaymentMethodID, &sub.CurrentPeriodUntil, &sub.NextChargeAt); err != nil {
+			return nil, err
+		}
+		out = append(out, sub)
+	}
+	return out, rows.Err()
+}
+
+func (r *Repository) PostponePremiumSubscription(ctx context.Context, userID int64, nextChargeAt time.Time) error {
+	_, err := r.db.Exec(ctx, `
+		update premium_subscriptions
+		set next_charge_at = $2, updated_at = now()
+		where user_id = $1`, userID, nextChargeAt)
+	return err
+}
+
+func (r *Repository) DisablePremiumSubscription(ctx context.Context, userID int64) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `update users set is_premium = false, updated_at = now() where id = $1`, userID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		update premium_subscriptions
+		set active = false, updated_at = now()
+		where user_id = $1`, userID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (r *Repository) SetUserStatus(ctx context.Context, userID int64, status string) error {
@@ -658,6 +771,9 @@ func (r *Repository) ResetUser(ctx context.Context, userID int64) error {
 	if _, err := tx.Exec(ctx, `delete from premium_payments where user_id = $1`, userID); err != nil {
 		return err
 	}
+	if _, err := tx.Exec(ctx, `delete from premium_subscriptions where user_id = $1`, userID); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(ctx, `delete from videos where user_id = $1`, userID); err != nil {
 		return err
 	}
@@ -678,6 +794,7 @@ func (r *Repository) ClearAllData(ctx context.Context) error {
 		truncate table
 			user_action_logs,
 			referral_contact_opens,
+			premium_subscriptions,
 			premium_payments,
 			user_reports,
 			video_reports,

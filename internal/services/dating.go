@@ -368,7 +368,7 @@ func (s *DatingService) SendPremiumOfferV2(ctx context.Context, user models.User
 
 func (s *DatingService) SendSubscriptionStatusV2(ctx context.Context, user models.User) error {
 	htmlText, plainText := s.subscriptionOfferText(user)
-	return s.max.SendFormattedText(ctx, user.PlatformChatID, htmlText, plainText, premiumOfferButtons(s.premiumPaymentURL(user)))
+	return s.max.SendFormattedText(ctx, user.PlatformChatID, htmlText, plainText, premiumOfferButtons(s.premiumPaymentURL(user, "3d"), s.premiumPaymentURL(user, "week")))
 }
 
 func (s *DatingService) subscriptionOfferText(user models.User) (string, string) {
@@ -412,11 +412,11 @@ func (s *DatingService) subscriptionOfferText(user models.User) (string, string)
 	return htmlText, plainText
 }
 
-func premiumOfferButtons(paymentURL string) [][]maxapi.Button {
+func premiumOfferButtons(threeDaysURL, weekURL string) [][]maxapi.Button {
 	return [][]maxapi.Button{
 		{{Text: "🎲 Открыть рандомный контакт", Payload: "random_contact"}},
-		{{Text: "🔥 49 ₽ / 3 дня", URL: paymentURL}},
-		{{Text: "💎 199 ₽ / неделя", URL: paymentURL}},
+		{{Text: "🔥 49 ₽ / 3 дня", URL: threeDaysURL}},
+		{{Text: "💎 199 ₽ / неделя", URL: weekURL}},
 		{{Text: "☰ Главное меню", Payload: "main_menu"}},
 	}
 }
@@ -1696,8 +1696,13 @@ func (s *DatingService) recordURL(user models.User) string {
 	return s.publicBaseURL + "/mini/record?u=" + user.PlatformUserID
 }
 
-func (s *DatingService) premiumPaymentURL(user models.User) string {
-	return s.publicBaseURL + "/pay?u=" + user.PlatformUserID
+func (s *DatingService) premiumPaymentURL(user models.User, plan ...string) string {
+	query := url.Values{}
+	query.Set("u", user.PlatformUserID)
+	if len(plan) > 0 && strings.TrimSpace(plan[0]) != "" {
+		query.Set("plan", strings.TrimSpace(plan[0]))
+	}
+	return s.publicBaseURL + "/pay?" + query.Encode()
 }
 
 func (s *DatingService) premiumPriceText() string {
