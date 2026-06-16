@@ -90,7 +90,7 @@ func (s *DatingService) HandleMessage(ctx context.Context, msg maxapi.MessageUpd
 	case strings.HasPrefix(text, "/link "):
 		return s.SaveProfileLink(ctx, *user, strings.TrimSpace(strings.TrimPrefix(text, "/link ")))
 	case text == "/admin" && s.isAdmin(*user):
-		return s.SendAdminPanel(ctx, *user)
+		return s.SendAdminPanelV2(ctx, *user)
 	case text == "/botstats" && s.isAdmin(*user):
 		return s.SendStats(ctx, *user)
 	case text == "/admin_list" && s.isAdmin(*user):
@@ -1218,6 +1218,37 @@ func (s *DatingService) SendAdminPanel(ctx context.Context, user models.User) er
 	})
 }
 
+func (s *DatingService) SendAdminPanelV2(ctx context.Context, user models.User) error {
+	text := strings.Join([]string{
+		"Админ-меню",
+		"",
+		"/adstats метка - статистика по метке",
+		"/adstats_all - статистика по всем меткам",
+		"/botstats - общая статистика",
+		"/substats - статистика подписок",
+		"",
+		"/tester_reset_me - очистить свой профиль, сохранив админку",
+		"/adtag метка - создать ссылку с меткой",
+		"/push_leads [лимит] - отправить пуш пользователям без активной подписки",
+		"/push_active текст - отправить пуш активным пользователям и админам",
+		"/push_stats - диагностика базы и последнего пуша",
+		"/payments - последние оплаты",
+		"/errors - последние ошибки",
+		"/user id - карточка пользователя",
+		"/admin_add id - добавить админа",
+		"/admin_del id - удалить админа",
+		"/admin_list - список админов",
+		"",
+		"/admin_reset_store confirm - полностью очистить базу бота",
+	}, "\n")
+	return s.max.SendText(ctx, user.PlatformChatID, text, [][]maxapi.Button{
+		{{Text: "📊 Статистика", Payload: "admin:stats"}},
+		{{Text: "🧹 Очистить мой профиль", Payload: "admin:reset_me"}},
+		{{Text: "🗑 Очистить базу", Payload: "admin:reset_store_prompt"}},
+		{{Text: "☰ Главное меню", Payload: "main_menu"}},
+	})
+}
+
 func (s *DatingService) SendStats(ctx context.Context, user models.User) error {
 	stats, err := s.repo.Stats(ctx)
 	if err != nil {
@@ -1369,7 +1400,7 @@ func (s *DatingService) getForward(platformUserID string) (maxapi.ForwardInfo, b
 
 func (s *DatingService) HandleAdmin(ctx context.Context, user models.User, parts []string) error {
 	if len(parts) < 2 {
-		return s.SendAdminPanel(ctx, user)
+		return s.SendAdminPanelV2(ctx, user)
 	}
 	switch parts[1] {
 	case "stats":
