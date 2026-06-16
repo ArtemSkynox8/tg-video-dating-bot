@@ -368,6 +368,9 @@ func (s *DatingService) SendPremiumOfferV2(ctx context.Context, user models.User
 
 func (s *DatingService) SendSubscriptionStatusV2(ctx context.Context, user models.User) error {
 	htmlText, plainText := s.subscriptionOfferText(user)
+	if user.IsPremium {
+		return s.max.SendFormattedText(ctx, user.PlatformChatID, htmlText, plainText, activeSubscriptionButtons())
+	}
 	return s.max.SendFormattedText(ctx, user.PlatformChatID, htmlText, plainText, premiumOfferButtons(s.premiumPaymentURL(user, "3d"), s.premiumPaymentURL(user, "week")))
 }
 
@@ -421,9 +424,18 @@ func premiumOfferButtons(threeDaysURL, weekURL string) [][]maxapi.Button {
 	}
 }
 
+func activeSubscriptionButtons() [][]maxapi.Button {
+	return [][]maxapi.Button{
+		{{Text: "🚫 Отменить подписку", Payload: "unsubscribe"}},
+		{{Text: "☰ Главное меню", Payload: "main_menu"}},
+	}
+}
+
 func (s *DatingService) SendUnsubscribeStub(ctx context.Context, user models.User) error {
-	return s.max.SendText(ctx, user.PlatformChatID, "Отписка пока работает в ручном режиме. Когда подключим реальный магазин и автосписания, эта кнопка будет отключать продление автоматически.", [][]maxapi.Button{
-		{{Text: "💎 Подписка", Payload: "subscription"}},
+	if err := s.repo.DisablePremiumSubscription(ctx, user.ID); err != nil {
+		return err
+	}
+	return s.max.SendText(ctx, user.PlatformChatID, "Подписка отменена. Автосписание отключено.", [][]maxapi.Button{
 		{{Text: "☰ Главное меню", Payload: "main_menu"}},
 	})
 }
