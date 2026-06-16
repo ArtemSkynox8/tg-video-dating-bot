@@ -344,6 +344,12 @@ func (r *Repository) SetAdTagIfEmpty(ctx context.Context, userID int64, tag stri
 	return err
 }
 
+func (r *Repository) UserAdTag(ctx context.Context, userID int64) (string, error) {
+	var tag string
+	err := r.db.QueryRow(ctx, `select coalesce(ad_tag, '') from users where id = $1`, userID).Scan(&tag)
+	return tag, err
+}
+
 func (r *Repository) CreateOfferReachedLog(ctx context.Context, userID int64, reason string) (string, string, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {

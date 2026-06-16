@@ -127,6 +127,13 @@ func (h *PaymentHandler) success(w http.ResponseWriter, r *http.Request) {
 		h.renderPayMessage(w, "Premium оплачен", "Оплата прошла, но доступ не включился автоматически. Напишите администратору.")
 		return
 	}
+	if storedPayment.Status != "succeeded" {
+		h.notifyAdminPaymentEvent(r.Context(), *user, "Купил подписку",
+			"Plan: "+plan.Code,
+			"Price: "+plan.Amount,
+			"Payment ID: "+storedPayment.ExternalID,
+		)
+	}
 	if user.PremiumOfferMessageID != "" {
 		_ = h.max.DeleteMessage(r.Context(), user.PremiumOfferChatID, user.PremiumOfferMessageID)
 		_ = h.repo.ClearPremiumOfferMessage(r.Context(), user.ID)
@@ -173,10 +180,20 @@ func (h *PaymentHandler) applyYooKassaPayment(ctx context.Context, payment yooKa
 	if payment.Status != "succeeded" {
 		return nil
 	}
+	if stored.Status == "succeeded" {
+		return nil
+	}
 	plan := premiumPlanByCode(stored.Plan)
 	until := time.Now().AddDate(0, 0, plan.PeriodDays)
 	if err := h.repo.SetPremiumSubscription(ctx, userID, plan.Code, plan.Amount, plan.PeriodDays, paymentMethodID, until); err != nil {
 		return err
+	}
+	if userForAdmin, err := h.repo.GetUserByID(ctx, userID); err == nil {
+		h.notifyAdminPaymentEvent(ctx, *userForAdmin, "Купил подписку",
+			"Plan: "+plan.Code,
+			"Price: "+plan.Amount,
+			"Payment ID: "+payment.ID,
+		)
 	}
 	user, err := h.repo.GetUserByID(ctx, userID)
 	if err == nil {
@@ -235,6 +252,11 @@ func (h *PaymentHandler) renewDueSubscriptions(ctx context.Context) {
 				log.Printf("extend premium user=%d payment=%s: %v", sub.User.ID, payment.ID, err)
 				continue
 			}
+			h.notifyAdminPaymentEvent(ctx, sub.User, "Продлил подписку",
+				"Plan: "+sub.Plan,
+				"Price: "+sub.Amount,
+				"Payment ID: "+payment.ID,
+			)
 			_ = h.max.SendText(ctx, sub.User.PlatformChatID, "💎 Подписка Premium продлена до "+until.Format("02.01.2006 15:04")+".", nil)
 			continue
 		}
@@ -249,6 +271,30 @@ func (h *PaymentHandler) renewDueSubscriptions(ctx context.Context) {
 			{{Text: "☰ Главное меню", Payload: "main_menu"}},
 		})
 		log.Printf("recurring payment user=%d payment=%s status=%s", sub.User.ID, payment.ID, payment.Status)
+	}
+}
+
+func (h *PaymentHandler) notifyAdminPaymentEvent(ctx context.Context, user models.User, title string, extra ...string) {
+	tag, err := h.repo.UserAdTag(ctx, user.ID)
+	if err != nil {
+		log.Printf("payment admin event tag user=%d title=%s: %v", user.ID, title, err)
+	}
+	if strings.TrimSpace(tag) == "" {
+		tag = "без метки"
+	}
+	lines := []string{
+		title,
+		"ID: " + user.PlatformUserID,
+		"Tag: " + tag,
+	}
+	lines = append(lines, extra...)
+	text := strings.Join(lines, "\n")
+	for _, adminID := range h.cfg.AdminPlatformIDs {
+		admin, err := h.repo.GetUserByPlatformID(ctx, adminID)
+		if err != nil {
+			continue
+		}
+		_ = h.max.SendText(ctx, admin.PlatformChatID, text, nil)
 	}
 }
 
@@ -411,7 +457,8 @@ type yooKassaPayment struct {
 }
 
 func (h *PaymentHandler) createYooKassaPayment(ctx context.Context, userID int64, platformUserID string, plan premiumPlan) (*yooKassaPayment, error) {
-	returnURL := strings.TrimRight(h.cfg.PublicBaseURL, "/") + "/pay/success?u=" + url.QueryEscape(platformUserID)
+	returnURL := h.yooKassaReturnURL(platformUserID)
+	description := "Premium subscription in dating bot: " + plan.Code
 	body := map[string]any{
 		"amount": map[string]string{
 			"value": plan.Amount,
@@ -423,13 +470,16 @@ func (h *PaymentHandler) createYooKassaPayment(ctx context.Context, userID int64
 			"type": "redirect",
 			"return_url": returnURL,
 		},
-		"description": "Premium подписка в боте знакомств: " + plan.Label,
+		"description": description,
 		"metadata": map[string]string{
 			"user_id":          fmt.Sprint(userID),
 			"platform_user_id": platformUserID,
 			"plan":             plan.Code,
 			"period_days":      fmt.Sprint(plan.PeriodDays),
 		},
+	}
+	if receipt := h.yooKassaReceipt(plan.Amount, description); receipt != nil {
+		body["receipt"] = receipt
 	}
 	var out yooKassaPayment
 	idempotenceBase := "initial-" + fmt.Sprint(userID) + "-" + plan.Code + "-" + fmt.Sprint(time.Now().UnixNano())
@@ -458,6 +508,7 @@ func (h *PaymentHandler) getYooKassaPayment(ctx context.Context, paymentID strin
 }
 
 func (h *PaymentHandler) createYooKassaRecurringPayment(ctx context.Context, sub models.PremiumSubscription, idempotenceKey string) (*yooKassaPayment, error) {
+	description := "Premium subscription renewal: " + sub.Plan
 	body := map[string]any{
 		"amount": map[string]string{
 			"value": sub.Amount,
@@ -465,13 +516,16 @@ func (h *PaymentHandler) createYooKassaRecurringPayment(ctx context.Context, sub
 		},
 		"capture": true,
 		"payment_method_id": sub.PaymentMethodID,
-		"description": "Автосписание Premium подписки: " + premiumPlanByCode(sub.Plan).Label,
+		"description": description,
 		"metadata": map[string]string{
 			"user_id":     fmt.Sprint(sub.User.ID),
 			"plan":        sub.Plan,
 			"period_days": fmt.Sprint(sub.PeriodDays),
 			"reason":      "renewal",
 		},
+	}
+	if receipt := h.yooKassaReceipt(sub.Amount, description); receipt != nil {
+		body["receipt"] = receipt
 	}
 	var out yooKassaPayment
 	if err := h.yooKassaRequest(ctx, http.MethodPost, "/v3/payments", body, &out, idempotenceKey); err != nil {
@@ -481,6 +535,44 @@ func (h *PaymentHandler) createYooKassaRecurringPayment(ctx context.Context, sub
 		return nil, fmt.Errorf("yookassa recurring response missing payment id")
 	}
 	return &out, nil
+}
+
+func (h *PaymentHandler) yooKassaReturnURL(platformUserID string) string {
+	botURL := strings.TrimSpace(h.cfg.ReturnToBotURL)
+	if botURL != "" {
+		return botURL
+	}
+	return strings.TrimRight(h.cfg.PublicBaseURL, "/") + "/pay/success?u=" + url.QueryEscape(platformUserID)
+}
+
+func (h *PaymentHandler) yooKassaReceipt(amount, description string) map[string]any {
+	email := strings.TrimSpace(h.cfg.YooKassaReceiptEmail)
+	if email == "" {
+		return nil
+	}
+	return map[string]any{
+		"customer": map[string]string{
+			"email": email,
+		},
+		"items": []map[string]any{
+			{
+				"description":     limitRunes(firstNonEmptyPayment(description, "Premium subscription"), 128),
+				"quantity":        "1.00",
+				"amount":          map[string]string{"value": amount, "currency": "RUB"},
+				"vat_code":        1,
+				"payment_mode":    "full_payment",
+				"payment_subject": "service",
+			},
+		},
+	}
+}
+
+func limitRunes(value string, max int) string {
+	runes := []rune(value)
+	if len(runes) <= max {
+		return value
+	}
+	return string(runes[:max])
 }
 
 func (h *PaymentHandler) yooKassaRequest(ctx context.Context, method, path string, in any, out any, idempotenceKey string) error {

@@ -45,6 +45,7 @@ func main() {
 	mux.Handle("GET /offer", miniapp)
 	mux.Handle("GET /pay", miniapp)
 	mux.Handle("GET /pay/success", miniapp)
+	mux.Handle("POST /pay/yookassa/webhook", miniapp)
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,

@@ -20,6 +20,7 @@ type Config struct {
 	AdminPlatformIDs          []string
 	YooKassaShopID            string
 	YooKassaSecretKey         string
+	YooKassaReceiptEmail      string
 	PremiumPrice              string
 	ContactInstructionVideoID string
 	ContactInstructionVideoPath string
@@ -43,6 +44,7 @@ func Load() Config {
 		AdminPlatformIDs:          splitCSV(os.Getenv("ADMIN_PLATFORM_IDS")),
 		YooKassaShopID:            os.Getenv("YOOKASSA_SHOP_ID"),
 		YooKassaSecretKey:         os.Getenv("YOOKASSA_SECRET_KEY"),
+		YooKassaReceiptEmail:      getEnv("YOOKASSA_RECEIPT_EMAIL", "artem.skynox@yandex.ru"),
 		PremiumPrice:              getEnv("PREMIUM_PRICE", "199.00"),
 		ContactInstructionVideoID: os.Getenv("CONTACT_INSTRUCTION_VIDEO_ID"),
 		ContactInstructionVideoPath: getEnv("CONTACT_INSTRUCTION_VIDEO_PATH", "assets/contact-instruction/instruction.mp4"),

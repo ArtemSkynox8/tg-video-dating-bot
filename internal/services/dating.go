@@ -62,6 +62,9 @@ func (s *DatingService) HandleMessage(ctx context.Context, msg maxapi.MessageUpd
 	if err != nil {
 		return err
 	}
+	if user.CreatedAt.Equal(user.UpdatedAt) {
+		s.NotifyAdminEvent(ctx, *user, "Зашел новый пользователь")
+	}
 
 	text := strings.TrimSpace(msg.Text)
 	if msg.Forward != nil {
@@ -428,7 +431,12 @@ func activeSubscriptionButtons() [][]maxapi.Button {
 	}
 }
 
-func (s *DatingService) SendUnsubscribeStub(ctx context.Context, user models.User) error {
+func (s *DatingService) SendUnsubscribeStub(ctx context.Context, user models.User) (err error) {
+	defer func() {
+		if err == nil {
+			s.NotifyAdminEvent(ctx, user, "Отменил подписку")
+		}
+	}()
 	if err := s.repo.DisablePremiumSubscription(ctx, user.ID); err != nil {
 		return err
 	}
@@ -530,6 +538,7 @@ func (s *DatingService) SaveRecordedVideo(ctx context.Context, user models.User,
 	if err := s.repo.ClearFlowState(ctx, user.ID); err != nil {
 		return err
 	}
+	s.NotifyAdminEvent(ctx, user, "Оставил кружок")
 	if strings.TrimSpace(user.ProfileLink) == "" && strings.TrimSpace(user.ContactPhone) == "" {
 		return s.max.SendText(ctx, user.PlatformChatID, "✅ Кружок успешно сохранен.\n\nЧтобы другие пользователи могли написать вам после взаимного лайка, добавьте свой контакт MAX.", [][]maxapi.Button{
 			{{Text: "📤 Как поделиться профилем MAX", Payload: "edit_profile_link"}},
@@ -672,6 +681,7 @@ func (s *DatingService) HandleMedia(ctx context.Context, user models.User, media
 	if err := s.repo.ClearFlowState(ctx, user.ID); err != nil {
 		return err
 	}
+	s.NotifyAdminEvent(ctx, user, "Оставил кружок")
 	if user.FlowState == models.StateAwaitingRewriteVideo || !expectingVideo {
 		return s.max.SendText(ctx, user.PlatformChatID, "Видео обновлено.", mainMenuButtons())
 	}
@@ -756,8 +766,12 @@ func (s *DatingService) HandleBrowseAction(ctx context.Context, user models.User
 		if !reverse && !user.IsPremium {
 			return s.SendPremiumOfferV2(ctx, user)
 		}
-		if _, err := s.repo.CreateLike(ctx, user.ID, ownerID); err != nil {
+		createdLike, err := s.repo.CreateLike(ctx, user.ID, ownerID)
+		if err != nil {
 			return err
+		}
+		if createdLike {
+			s.NotifyAdminEvent(ctx, user, "Поставил лайк", fmt.Sprintf("Target: %d", ownerID))
 		}
 		if err := s.repo.EnqueuePriority(ctx, ownerID, user.ID); err != nil {
 			return err
@@ -788,8 +802,12 @@ func (s *DatingService) HandleLikeOnly(ctx context.Context, user models.User, ch
 	if err := s.NotifyReferralCompleted(ctx, user.ID); err != nil {
 		log.Printf("complete referral user=%d: %v", user.ID, err)
 	}
-	if _, err := s.repo.CreateLike(ctx, user.ID, ownerID); err != nil {
+	createdLike, err := s.repo.CreateLike(ctx, user.ID, ownerID)
+	if err != nil {
 		return err
+	}
+	if createdLike {
+		s.NotifyAdminEvent(ctx, user, "Поставил лайк", fmt.Sprintf("Target: %d", ownerID))
 	}
 	if err := s.repo.EnqueuePriority(ctx, ownerID, user.ID); err != nil {
 		return err
@@ -1286,7 +1304,31 @@ func (s *DatingService) NotifyOfferReached(ctx context.Context, user models.User
 	if strings.TrimSpace(tag) == "" {
 		tag = "без метки"
 	}
-	text := fmt.Sprintf("Offer reached\nID: %s\nTag: %s\nReason: %s\nType: %s", user.PlatformUserID, tag, reason, offerType)
+	text := fmt.Sprintf("Получил оффер\nID: %s\nTag: %s\nReason: %s\nType: %s", user.PlatformUserID, tag, reason, offerType)
+	for _, adminID := range s.adminIDs {
+		admin, err := s.repo.GetUserByPlatformID(ctx, adminID)
+		if err != nil {
+			continue
+		}
+		_ = s.max.SendText(ctx, admin.PlatformChatID, text, nil)
+	}
+}
+
+func (s *DatingService) NotifyAdminEvent(ctx context.Context, user models.User, title string, extra ...string) {
+	tag, err := s.repo.UserAdTag(ctx, user.ID)
+	if err != nil {
+		log.Printf("admin event tag user=%d title=%s: %v", user.ID, title, err)
+	}
+	if strings.TrimSpace(tag) == "" {
+		tag = "без метки"
+	}
+	lines := []string{
+		title,
+		"ID: " + user.PlatformUserID,
+		"Tag: " + tag,
+	}
+	lines = append(lines, extra...)
+	text := strings.Join(lines, "\n")
 	for _, adminID := range s.adminIDs {
 		admin, err := s.repo.GetUserByPlatformID(ctx, adminID)
 		if err != nil {
