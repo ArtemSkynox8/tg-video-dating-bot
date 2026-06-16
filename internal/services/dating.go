@@ -1621,7 +1621,7 @@ func maxShareURL(text string) string {
 	if text == "" {
 		return ""
 	}
-	return "https://max.ru/:share?text=" + url.QueryEscape(text)
+	return "https://max.ru/:share?text=" + strings.ReplaceAll(url.QueryEscape(text), "+", "%20")
 }
 
 func genderButtons() [][]maxapi.Button {
