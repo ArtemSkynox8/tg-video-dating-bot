@@ -93,6 +93,12 @@ func (s *DatingService) HandleMessage(ctx context.Context, msg maxapi.MessageUpd
 		return s.SendAdminPanelV2(ctx, *user)
 	case text == "/botstats" && s.isAdmin(*user):
 		return s.SendStats(ctx, *user)
+	case text == "/adstats_all" && s.isAdmin(*user):
+		return s.SendAdStatsAll(ctx, *user)
+	case strings.HasPrefix(text, "/adstats ") && s.isAdmin(*user):
+		return s.SendAdStats(ctx, *user, strings.TrimSpace(strings.TrimPrefix(text, "/adstats ")))
+	case strings.HasPrefix(text, "/adtag ") && s.isAdmin(*user):
+		return s.SendAdTag(ctx, *user, strings.TrimSpace(strings.TrimPrefix(text, "/adtag ")))
 	case text == "/admin_list" && s.isAdmin(*user):
 		return s.max.SendText(ctx, user.PlatformChatID, "Админы: "+strings.Join(s.adminIDs, ", "), nil)
 	case text == "/payments" && s.isAdmin(*user):
@@ -361,6 +367,7 @@ func (s *DatingService) SendSubscriptionStatusV2(ctx context.Context, user model
 	if user.IsPremium {
 		return s.max.SendFormattedText(ctx, user.PlatformChatID, htmlText, plainText, activeSubscriptionButtons())
 	}
+	s.NotifyOfferReached(ctx, user, "premium_open")
 	return s.max.SendFormattedText(ctx, user.PlatformChatID, htmlText, plainText, premiumOfferButtons(s.premiumPaymentURL(user, "3d"), s.premiumPaymentURL(user, "week")))
 }
 
@@ -843,6 +850,7 @@ func (s *DatingService) SendReferralInvite(ctx context.Context, user models.User
 
 func (s *DatingService) OpenRandomReferralContact(ctx context.Context, user models.User) error {
 	if user.ReferralContactCredits <= 0 {
+		s.NotifyOfferReached(ctx, user, "credits_empty")
 		return s.SendReferralInvite(ctx, user)
 	}
 	candidate, err := s.repo.FindRandomReferralContact(ctx, user.ID)
@@ -1019,6 +1027,13 @@ func (s *DatingService) HandleStartPayload(ctx context.Context, user models.User
 	if strings.HasPrefix(payload, "ref_") {
 		referrerID := parseID(strings.TrimPrefix(payload, "ref_"))
 		if err := s.repo.SetReferrer(ctx, user.ID, referrerID); err != nil {
+			return err
+		}
+		return s.Start(ctx, user)
+	}
+	if strings.HasPrefix(payload, "ad_") {
+		tag := strings.TrimSpace(strings.TrimPrefix(payload, "ad_"))
+		if err := s.repo.SetAdTagIfEmpty(ctx, user.ID, tag); err != nil {
 			return err
 		}
 		return s.Start(ctx, user)
@@ -1228,6 +1243,57 @@ func (s *DatingService) SendStats(ctx context.Context, user models.User) error {
 		"📊 Статистика\nВсего пользователей: %d\nАктивных: %d\nВидео: %d\nЛайков: %d\nMatches: %d\nЖалоб: %d\nPremium: %d",
 		stats["users"], stats["active_users"], stats["videos"], stats["likes"], stats["matches"], stats["reports"], stats["premium_users"],
 	), nil)
+}
+
+func (s *DatingService) SendAdTag(ctx context.Context, user models.User, tag string) error {
+	tag = strings.TrimSpace(tag)
+	if tag == "" {
+		return s.max.SendText(ctx, user.PlatformChatID, "Укажите метку:\n/adtag link1", nil)
+	}
+	link := s.botStartURL("ad_" + tag)
+	if link == "" {
+		return s.max.SendText(ctx, user.PlatformChatID, "Не удалось создать ссылку: RETURN_TO_BOT_URL не настроен.", nil)
+	}
+	return s.max.SendText(ctx, user.PlatformChatID, "Ссылка с меткой "+tag+":\n"+link, nil)
+}
+
+func (s *DatingService) SendAdStatsAll(ctx context.Context, user models.User) error {
+	stats, err := s.repo.AdStats(ctx, "")
+	if err != nil {
+		return err
+	}
+	return s.max.SendText(ctx, user.PlatformChatID, formatAdStats("📊 Статистика по всем меткам", stats), nil)
+}
+
+func (s *DatingService) SendAdStats(ctx context.Context, user models.User, tag string) error {
+	tag = strings.TrimSpace(tag)
+	if tag == "" {
+		return s.max.SendText(ctx, user.PlatformChatID, "Укажите метку:\n/adstats link1", nil)
+	}
+	stats, err := s.repo.AdStats(ctx, tag)
+	if err != nil {
+		return err
+	}
+	return s.max.SendText(ctx, user.PlatformChatID, formatAdStats("📊 Статистика по метке "+tag, stats), nil)
+}
+
+func (s *DatingService) NotifyOfferReached(ctx context.Context, user models.User, reason string) {
+	tag, offerType, err := s.repo.CreateOfferReachedLog(ctx, user.ID, reason)
+	if err != nil {
+		log.Printf("offer reached log user=%d reason=%s: %v", user.ID, reason, err)
+		return
+	}
+	if strings.TrimSpace(tag) == "" {
+		tag = "без метки"
+	}
+	text := fmt.Sprintf("Offer reached\nID: %s\nTag: %s\nReason: %s\nType: %s", user.PlatformUserID, tag, reason, offerType)
+	for _, adminID := range s.adminIDs {
+		admin, err := s.repo.GetUserByPlatformID(ctx, adminID)
+		if err != nil {
+			continue
+		}
+		_ = s.max.SendText(ctx, admin.PlatformChatID, text, nil)
+	}
 }
 
 func (s *DatingService) SendUserCard(ctx context.Context, admin models.User, idText string) error {
@@ -1496,6 +1562,29 @@ func parseID(value string) int64 {
 	var out int64
 	_, _ = fmt.Sscan(value, &out)
 	return out
+}
+
+func formatAdStats(title string, stats []models.AdStats) string {
+	lines := []string{title}
+	if len(stats) == 0 {
+		lines = append(lines, "Нет данных.")
+		return strings.Join(lines, "\n")
+	}
+	for _, item := range stats {
+		offerPercent := 0.0
+		convPercent := 0.0
+		ltv := 0.0
+		if item.Users > 0 {
+			offerPercent = float64(item.Offer) / float64(item.Users) * 100
+			convPercent = float64(item.Buyers) / float64(item.Users) * 100
+			ltv = item.Sum / float64(item.Users)
+		}
+		lines = append(lines, fmt.Sprintf(
+			"• %s | users %d | offer %d (%.1f%%) | buyers %d | conv %.1f%% | sum %.0f | LTV %.1f",
+			item.Tag, item.Users, item.Offer, offerPercent, item.Buyers, convPercent, item.Sum, ltv,
+		))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func displayName(user models.User) string {

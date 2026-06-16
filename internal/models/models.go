@@ -60,6 +60,14 @@ type PremiumSubscription struct {
 	NextChargeAt    time.Time
 }
 
+type AdStats struct {
+	Tag    string
+	Users  int64
+	Offer  int64
+	Buyers int64
+	Sum    float64
+}
+
 const (
 	StatusActive     = "active"
 	StatusBlocked    = "blocked"

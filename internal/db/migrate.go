@@ -39,6 +39,7 @@ alter table users add column if not exists premium_offer_message_id text;
 alter table users add column if not exists referrer_user_id bigint references users(id) on delete set null;
 alter table users add column if not exists referral_contact_credits integer not null default 0;
 alter table users add column if not exists referral_rewarded_at timestamptz;
+alter table users add column if not exists ad_tag text;
 
 create table if not exists videos (
     id bigserial primary key,
@@ -173,5 +174,7 @@ create index if not exists premium_payments_user_status_idx on premium_payments(
 create index if not exists premium_payments_external_idx on premium_payments(external_id);
 create index if not exists premium_subscriptions_due_idx on premium_subscriptions(active, next_charge_at);
 create index if not exists users_referrer_idx on users(referrer_user_id);
+create index if not exists users_ad_tag_idx on users(ad_tag);
 create index if not exists referral_contact_opens_user_idx on referral_contact_opens(user_id, created_at desc);
+create index if not exists user_action_logs_action_idx on user_action_logs(action, created_at desc);
 `

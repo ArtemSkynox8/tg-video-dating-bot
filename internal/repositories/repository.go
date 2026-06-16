@@ -336,6 +336,87 @@ func (r *Repository) ResetBrowseViews(ctx context.Context, userID int64) error {
 	return err
 }
 
+func (r *Repository) SetAdTagIfEmpty(ctx context.Context, userID int64, tag string) error {
+	_, err := r.db.Exec(ctx, `
+		update users
+		set ad_tag = nullif($2, ''), updated_at = now()
+		where id = $1 and ad_tag is null`, userID, tag)
+	return err
+}
+
+func (r *Repository) CreateOfferReachedLog(ctx context.Context, userID int64, reason string) (string, string, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	defer tx.Rollback(ctx)
+	var tag string
+	if err := tx.QueryRow(ctx, `select coalesce(ad_tag, '') from users where id = $1`, userID).Scan(&tag); err != nil {
+		return "", "", err
+	}
+	var previous int64
+	if err := tx.QueryRow(ctx, `select count(*) from user_action_logs where user_id = $1 and action = 'offer_reached'`, userID).Scan(&previous); err != nil {
+		return "", "", err
+	}
+	offerType := "new"
+	if previous > 0 {
+		offerType = "repeat"
+	}
+	if _, err := tx.Exec(ctx, `
+		insert into user_action_logs (user_id, action, payload)
+		values ($1, 'offer_reached', jsonb_build_object('tag', nullif($2, ''), 'reason', $3, 'type', $4))`,
+		userID, tag, reason, offerType); err != nil {
+		return "", "", err
+	}
+	return tag, offerType, tx.Commit(ctx)
+}
+
+func (r *Repository) AdStats(ctx context.Context, tag string) ([]models.AdStats, error) {
+	rows, err := r.db.Query(ctx, `
+		with user_stats as (
+			select coalesce(nullif(ad_tag, ''), 'без метки') as tag, count(*) as users
+			from users
+			where ($1 = '' or coalesce(nullif(ad_tag, ''), 'без метки') = $1)
+			group by 1
+		),
+		offer_stats as (
+			select coalesce(nullif(u.ad_tag, ''), 'без метки') as tag, count(*) as offer
+			from user_action_logs l
+			join users u on u.id = l.user_id
+			where l.action = 'offer_reached'
+			  and ($1 = '' or coalesce(nullif(u.ad_tag, ''), 'без метки') = $1)
+			group by 1
+		),
+		buyer_stats as (
+			select coalesce(nullif(u.ad_tag, ''), 'без метки') as tag,
+			       count(distinct p.user_id) as buyers,
+			       coalesce(sum(p.amount), 0)::float8 as sum
+			from premium_payments p
+			join users u on u.id = p.user_id
+			where p.status = 'succeeded'
+			  and ($1 = '' or coalesce(nullif(u.ad_tag, ''), 'без метки') = $1)
+			group by 1
+		)
+		select us.tag, us.users, coalesce(os.offer, 0), coalesce(bs.buyers, 0), coalesce(bs.sum, 0)
+		from user_stats us
+		left join offer_stats os on os.tag = us.tag
+		left join buyer_stats bs on bs.tag = us.tag
+		order by us.users desc, us.tag asc`, tag)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	stats := []models.AdStats{}
+	for rows.Next() {
+		var item models.AdStats
+		if err := rows.Scan(&item.Tag, &item.Users, &item.Offer, &item.Buyers, &item.Sum); err != nil {
+			return nil, err
+		}
+		stats = append(stats, item)
+	}
+	return stats, rows.Err()
+}
+
 func (r *Repository) SetReferrer(ctx context.Context, userID, referrerUserID int64) error {
 	if userID == 0 || referrerUserID == 0 || userID == referrerUserID {
 		return nil
