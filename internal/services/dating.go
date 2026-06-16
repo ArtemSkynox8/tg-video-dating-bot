@@ -264,10 +264,6 @@ func (s *DatingService) HandleCallback(ctx context.Context, cb maxapi.CallbackUp
 		return s.OpenRandomReferralContact(ctx, *user)
 	case "invite_friend":
 		return s.SendReferralInvite(ctx, *user)
-	case "payment_soon":
-		return s.max.SendText(ctx, cb.Chat.ID, "Оплата пока подключается.", [][]maxapi.Button{
-			{{Text: "☰ Главное меню", Payload: "main_menu"}},
-		})
 	case "unsubscribe":
 		return s.SendUnsubscribeStub(ctx, *user)
 	case "missing_profile_link":
@@ -419,7 +415,7 @@ func (s *DatingService) subscriptionOfferText(user models.User) (string, string)
 func premiumOfferButtons(paymentURL string) [][]maxapi.Button {
 	return [][]maxapi.Button{
 		{{Text: "🎲 Открыть рандомный контакт", Payload: "random_contact"}},
-		{{Text: "🔥 49 ₽ / 3 дня", Payload: "payment_soon"}},
+		{{Text: "🔥 49 ₽ / 3 дня", URL: paymentURL}},
 		{{Text: "💎 199 ₽ / неделя", URL: paymentURL}},
 		{{Text: "☰ Главное меню", Payload: "main_menu"}},
 	}
@@ -836,7 +832,11 @@ func (s *DatingService) SendReferralInvite(ctx context.Context, user models.User
 	if inviteURL != "" {
 		text += "\n\n" + inviteURL
 	}
-	return s.max.SendText(ctx, user.PlatformChatID, text, referralInviteButtons(inviteURL))
+	shareText := "Привет! Регистрируйся в боте «Знакомства кружки»: тут знакомятся через короткие видео-кружки."
+	if inviteURL != "" {
+		shareText += "\n" + inviteURL
+	}
+	return s.max.SendText(ctx, user.PlatformChatID, text, referralInviteButtons(maxShareURL(shareText)))
 }
 
 func (s *DatingService) OpenRandomReferralContact(ctx context.Context, user models.User) error {
@@ -1607,13 +1607,21 @@ func randomContactButtons(user models.User) [][]maxapi.Button {
 	return buttons
 }
 
-func referralInviteButtons(inviteURL string) [][]maxapi.Button {
+func referralInviteButtons(shareURL string) [][]maxapi.Button {
 	buttons := [][]maxapi.Button{}
-	if inviteURL != "" {
-		buttons = append(buttons, []maxapi.Button{{Text: "🎁 Поделиться", URL: inviteURL}})
+	if shareURL != "" {
+		buttons = append(buttons, []maxapi.Button{{Text: "🎁 Поделиться", URL: shareURL}})
 	}
 	buttons = append(buttons, []maxapi.Button{{Text: "☰ Главное меню", Payload: "main_menu"}})
 	return buttons
+}
+
+func maxShareURL(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	return "https://max.ru/:share?text=" + url.QueryEscape(text)
 }
 
 func genderButtons() [][]maxapi.Button {
