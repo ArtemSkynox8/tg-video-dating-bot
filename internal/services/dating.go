@@ -108,18 +108,8 @@ func (s *DatingService) HandleMessage(ctx context.Context, msg maxapi.MessageUpd
 		return s.ResetMe(ctx, *user)
 	case text == "/admin_reset_store confirm" && s.isAdmin(*user):
 		return s.AdminResetStore(ctx, *user)
-	case strings.HasPrefix(text, "/admin_deeplink ") && s.isAdmin(*user):
-		return s.SendAdminDeepLinkTest(ctx, *user, strings.TrimSpace(strings.TrimPrefix(text, "/admin_deeplink ")))
-	case strings.HasPrefix(text, "/admin_deeplink_text ") && s.isAdmin(*user):
-		return s.SendAdminDeepLinkTextTest(ctx, *user, strings.TrimSpace(strings.TrimPrefix(text, "/admin_deeplink_text ")))
-	case strings.HasPrefix(text, "/admin_phone_link_text ") && s.isAdmin(*user):
-		return s.SendAdminPhoneLinkTextTest(ctx, *user, strings.TrimSpace(strings.TrimPrefix(text, "/admin_phone_link_text ")))
-	case strings.HasPrefix(text, "/admin_send_contact ") && s.isAdmin(*user):
-		return s.SendAdminContactCardTest(ctx, *user, strings.TrimSpace(strings.TrimPrefix(text, "/admin_send_contact ")))
-	case strings.HasPrefix(text, "/admin_send_forward ") && s.isAdmin(*user):
-		return s.SendAdminForwardTest(ctx, *user, strings.TrimSpace(strings.TrimPrefix(text, "/admin_send_forward ")))
 	case strings.HasPrefix(text, "/user ") && s.isAdmin(*user):
-		return s.SendUserCard(ctx, *user, strings.TrimSpace(strings.TrimPrefix(text, "/user ")))
+		return s.SendUserCardV2(ctx, *user, strings.TrimSpace(strings.TrimPrefix(text, "/user ")))
 	case strings.HasPrefix(text, "📬 Взаимные лайки"):
 		return s.SendMatches(ctx, *user)
 	case text == "▶️ Начать просмотр":
@@ -1195,27 +1185,7 @@ func (s *DatingService) HandleUserReport(ctx context.Context, user models.User, 
 }
 
 func (s *DatingService) SendAdminPanel(ctx context.Context, user models.User) error {
-	text := strings.Join([]string{
-		"Админ-меню:",
-		"/botstats - общая статистика",
-		"/user id - карточка пользователя по ID",
-		"/admin_deeplink platform_user_id - тест deep link MAX",
-		"/admin_deeplink_text platform_user_id - тест ссылок текстом",
-		"/admin_phone_link_text phone - тест ссылок по телефону",
-		"/admin_send_contact phone name - тест contact card",
-		"/admin_send_forward user_id - тест пересланного сообщения",
-		"/tester_reset_me - очистить свой профиль",
-		"/admin_reset_store confirm - полностью очистить базу бота",
-		"",
-		"Эта команда скрыта из общего списка. Публичные команды доступны через /help.",
-	}, "\n")
-	return s.max.SendText(ctx, user.PlatformChatID, text, [][]maxapi.Button{
-		{{Text: "📊 Статистика", Payload: "admin:stats"}},
-		{{Text: "👥 Пользователи", Payload: "admin:users"}},
-		{{Text: "🧹 Очистить мой профиль", Payload: "admin:reset_me"}},
-		{{Text: "🗑 Очистить базу", Payload: "admin:reset_store_prompt"}},
-		{{Text: "☰ Главное меню", Payload: "main_menu"}},
-	})
+	return s.SendAdminPanelV2(ctx, user)
 }
 
 func (s *DatingService) SendAdminPanelV2(ctx context.Context, user models.User) error {
@@ -1282,6 +1252,29 @@ func (s *DatingService) SendUserCard(ctx context.Context, admin models.User, idT
 		{Text: "🗑 Удалить видео", Payload: fmt.Sprintf("admin:delete_video:%d", target.ID)},
 	}, {
 		{Text: "🔗 Тест deep link", Payload: fmt.Sprintf("admin:deeplink:%s", target.PlatformUserID)},
+	}})
+}
+
+func (s *DatingService) SendUserCardV2(ctx context.Context, admin models.User, idText string) error {
+	target, err := s.repo.GetUserByID(ctx, parseID(idText))
+	if err != nil {
+		if err == repositories.ErrNotFound {
+			return s.max.SendText(ctx, admin.PlatformChatID, "Пользователь не найден.", nil)
+		}
+		return err
+	}
+	videoStatus := "нет"
+	if _, err := s.repo.GetActiveVideoByUser(ctx, target.ID); err == nil {
+		videoStatus = "есть"
+	}
+	text := fmt.Sprintf(
+		"Карточка пользователя #%d\nplatform_user_id: %s\nchat_id: %s\ndialog_id: %s\nname: %s\nusername: %s\ngender: %s\npreferred: %s\nstatus: %s\nflow_state: %s\nactive_video: %s",
+		target.ID, target.PlatformUserID, target.PlatformChatID, target.PlatformDialogID, target.Name, target.Username, target.Gender, target.PreferredGender, target.Status, target.FlowState, videoStatus,
+	)
+	return s.max.SendText(ctx, admin.PlatformChatID, text, [][]maxapi.Button{{
+		{Text: "🚫 Заблокировать", Payload: fmt.Sprintf("admin:block:%d", target.ID)},
+		{Text: "✅ Разблокировать", Payload: fmt.Sprintf("admin:unblock:%d", target.ID)},
+		{Text: "🗑 Удалить видео", Payload: fmt.Sprintf("admin:delete_video:%d", target.ID)},
 	}})
 }
 
@@ -1400,6 +1393,9 @@ func (s *DatingService) getForward(platformUserID string) (maxapi.ForwardInfo, b
 
 func (s *DatingService) HandleAdmin(ctx context.Context, user models.User, parts []string) error {
 	if len(parts) < 2 {
+		return s.SendAdminPanelV2(ctx, user)
+	}
+	if parts[1] == "users" || parts[1] == "deeplink" {
 		return s.SendAdminPanelV2(ctx, user)
 	}
 	switch parts[1] {
