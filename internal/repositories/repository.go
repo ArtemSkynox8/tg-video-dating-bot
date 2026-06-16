@@ -24,7 +24,7 @@ func (r *Repository) GetUserByPlatformID(ctx context.Context, platformUserID str
 	row := r.db.QueryRow(ctx, `
 		select id, platform_user_id, platform_chat_id, coalesce(platform_dialog_id, ''), coalesce(profile_link, ''), coalesce(contact_phone, ''), coalesce(username, ''),
 		       coalesce(name, ''), coalesce(gender, ''), coalesce(preferred_gender, ''), coalesce(flow_state, ''), is_premium,
-		       status, restricted_until, coalesce(premium_offer_chat_id, ''), coalesce(premium_offer_message_id, ''), created_at, updated_at
+		       referrer_user_id, referral_contact_credits, referral_rewarded_at, status, restricted_until, coalesce(premium_offer_chat_id, ''), coalesce(premium_offer_message_id, ''), created_at, updated_at
 		from users where platform_user_id = $1`, platformUserID)
 	return scanUser(row)
 }
@@ -33,7 +33,7 @@ func (r *Repository) GetUserByID(ctx context.Context, userID int64) (*models.Use
 	row := r.db.QueryRow(ctx, `
 		select id, platform_user_id, platform_chat_id, coalesce(platform_dialog_id, ''), coalesce(profile_link, ''), coalesce(contact_phone, ''), coalesce(username, ''),
 		       coalesce(name, ''), coalesce(gender, ''), coalesce(preferred_gender, ''), coalesce(flow_state, ''), is_premium,
-		       status, restricted_until, coalesce(premium_offer_chat_id, ''), coalesce(premium_offer_message_id, ''), created_at, updated_at
+		       referrer_user_id, referral_contact_credits, referral_rewarded_at, status, restricted_until, coalesce(premium_offer_chat_id, ''), coalesce(premium_offer_message_id, ''), created_at, updated_at
 		from users where id = $1`, userID)
 	return scanUser(row)
 }
@@ -50,7 +50,7 @@ func (r *Repository) UpsertPlatformUser(ctx context.Context, user models.User) (
 			updated_at = now()
 		returning id, platform_user_id, platform_chat_id, coalesce(platform_dialog_id, ''), coalesce(profile_link, ''), coalesce(contact_phone, ''), coalesce(username, ''),
 		          coalesce(name, ''), coalesce(gender, ''), coalesce(preferred_gender, ''), coalesce(flow_state, ''), is_premium,
-		          status, restricted_until, coalesce(premium_offer_chat_id, ''), coalesce(premium_offer_message_id, ''), created_at, updated_at`,
+		          referrer_user_id, referral_contact_credits, referral_rewarded_at, status, restricted_until, coalesce(premium_offer_chat_id, ''), coalesce(premium_offer_message_id, ''), created_at, updated_at`,
 		user.PlatformUserID, user.PlatformChatID, user.PlatformDialogID, user.ProfileLink, user.Username)
 	return scanUser(row)
 }
@@ -191,7 +191,7 @@ func (r *Repository) FindCandidate(ctx context.Context, viewerID int64) (*models
 		select v.id, v.user_id, v.platform_media_id, coalesce(v.storage_url, ''), v.duration, v.is_active, v.created_at,
 		       u.id, u.platform_user_id, u.platform_chat_id, coalesce(u.platform_dialog_id, ''), coalesce(u.profile_link, ''), coalesce(u.contact_phone, ''), coalesce(u.username, ''),
 		       coalesce(u.name, ''), coalesce(u.gender, ''), coalesce(u.preferred_gender, ''), coalesce(u.flow_state, ''), u.is_premium,
-		       u.status, u.restricted_until, coalesce(u.premium_offer_chat_id, ''), coalesce(u.premium_offer_message_id, ''), u.created_at, u.updated_at
+		       u.referrer_user_id, u.referral_contact_credits, u.referral_rewarded_at, u.status, u.restricted_until, coalesce(u.premium_offer_chat_id, ''), coalesce(u.premium_offer_message_id, ''), u.created_at, u.updated_at
 		from (
 			select * from priority
 			union all
@@ -211,6 +211,7 @@ func (r *Repository) FindCandidate(ctx context.Context, viewerID int64) (*models
 		&c.ID, &c.UserID, &c.PlatformMediaID, &c.StorageURL, &c.Duration, &c.IsActive, &c.CreatedAt,
 		&c.Owner.ID, &c.Owner.PlatformUserID, &c.Owner.PlatformChatID, &c.Owner.PlatformDialogID, &c.Owner.ProfileLink, &c.Owner.ContactPhone, &c.Owner.Username,
 		&c.Owner.Name, &c.Owner.Gender, &c.Owner.PreferredGender, &c.Owner.FlowState, &c.Owner.IsPremium,
+		&c.Owner.ReferrerUserID, &c.Owner.ReferralContactCredits, &c.Owner.ReferralRewardedAt,
 		&c.Owner.Status, &c.Owner.RestrictedUntil, &c.Owner.PremiumOfferChatID, &c.Owner.PremiumOfferMessageID, &c.Owner.CreatedAt, &c.Owner.UpdatedAt,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -335,6 +336,126 @@ func (r *Repository) ResetBrowseViews(ctx context.Context, userID int64) error {
 	return err
 }
 
+func (r *Repository) SetReferrer(ctx context.Context, userID, referrerUserID int64) error {
+	if userID == 0 || referrerUserID == 0 || userID == referrerUserID {
+		return nil
+	}
+	_, err := r.db.Exec(ctx, `
+		update users
+		set referrer_user_id = $2, updated_at = now()
+		where id = $1
+		  and referrer_user_id is null
+		  and exists (select 1 from users referrer where referrer.id = $2)`, userID, referrerUserID)
+	return err
+}
+
+func (r *Repository) CompleteReferralIfNeeded(ctx context.Context, userID int64) (*models.User, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	var referrerID int64
+	tag, err := tx.Exec(ctx, `
+		update users
+		set referral_rewarded_at = now(), updated_at = now()
+		where id = $1 and referrer_user_id is not null and referral_rewarded_at is null`, userID)
+	if err != nil {
+		return nil, err
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, nil
+	}
+	if err := tx.QueryRow(ctx, `select referrer_user_id from users where id = $1`, userID).Scan(&referrerID); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(ctx, `
+		update users
+		set referral_contact_credits = referral_contact_credits + 1, updated_at = now()
+		where id = $1`, referrerID); err != nil {
+		return nil, err
+	}
+	row := tx.QueryRow(ctx, `
+		select id, platform_user_id, platform_chat_id, coalesce(platform_dialog_id, ''), coalesce(profile_link, ''), coalesce(contact_phone, ''), coalesce(username, ''),
+		       coalesce(name, ''), coalesce(gender, ''), coalesce(preferred_gender, ''), coalesce(flow_state, ''), is_premium,
+		       referrer_user_id, referral_contact_credits, referral_rewarded_at, status, restricted_until, coalesce(premium_offer_chat_id, ''), coalesce(premium_offer_message_id, ''), created_at, updated_at
+		from users where id = $1`, referrerID)
+	referrer, err := scanUser(row)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return referrer, nil
+}
+
+func (r *Repository) ConsumeReferralContactCredit(ctx context.Context, userID, openedUserID int64) (bool, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+	tag, err := tx.Exec(ctx, `
+		update users
+		set referral_contact_credits = referral_contact_credits - 1, updated_at = now()
+		where id = $1 and referral_contact_credits > 0`, userID)
+	if err != nil {
+		return false, err
+	}
+	if tag.RowsAffected() == 0 {
+		return false, nil
+	}
+	if _, err := tx.Exec(ctx, `
+		insert into referral_contact_opens (user_id, opened_user_id)
+		values ($1, $2)
+		on conflict (user_id, opened_user_id) do nothing`, userID, openedUserID); err != nil {
+		return false, err
+	}
+	return true, tx.Commit(ctx)
+}
+
+func (r *Repository) FindRandomReferralContact(ctx context.Context, userID int64) (*models.Candidate, error) {
+	row := r.db.QueryRow(ctx, `
+		select v.id, v.user_id, v.platform_media_id, coalesce(v.storage_url, ''), v.duration, v.is_active, v.created_at,
+		       u.id, u.platform_user_id, u.platform_chat_id, coalesce(u.platform_dialog_id, ''), coalesce(u.profile_link, ''), coalesce(u.contact_phone, ''), coalesce(u.username, ''),
+		       coalesce(u.name, ''), coalesce(u.gender, ''), coalesce(u.preferred_gender, ''), coalesce(u.flow_state, ''), u.is_premium,
+		       u.referrer_user_id, u.referral_contact_credits, u.referral_rewarded_at, u.status, u.restricted_until, coalesce(u.premium_offer_chat_id, ''), coalesce(u.premium_offer_message_id, ''), u.created_at, u.updated_at
+		from (
+			select v.*
+			from videos v
+			join users owner on owner.id = v.user_id
+			where v.is_active = true
+			  and v.user_id <> $1
+			  and owner.status = 'active'
+			  and (owner.restricted_until is null or owner.restricted_until < now())
+			order by v.created_at desc
+			limit 10
+		) v
+		join users u on u.id = v.user_id
+		where not exists (
+			select 1 from referral_contact_opens opened
+			where opened.user_id = $1 and opened.opened_user_id = u.id
+		)
+		order by random()
+		limit 1`, userID)
+	var c models.Candidate
+	if err := row.Scan(
+		&c.ID, &c.UserID, &c.PlatformMediaID, &c.StorageURL, &c.Duration, &c.IsActive, &c.CreatedAt,
+		&c.Owner.ID, &c.Owner.PlatformUserID, &c.Owner.PlatformChatID, &c.Owner.PlatformDialogID, &c.Owner.ProfileLink, &c.Owner.ContactPhone, &c.Owner.Username,
+		&c.Owner.Name, &c.Owner.Gender, &c.Owner.PreferredGender, &c.Owner.FlowState, &c.Owner.IsPremium,
+		&c.Owner.ReferrerUserID, &c.Owner.ReferralContactCredits, &c.Owner.ReferralRewardedAt,
+		&c.Owner.Status, &c.Owner.RestrictedUntil, &c.Owner.PremiumOfferChatID, &c.Owner.PremiumOfferMessageID, &c.Owner.CreatedAt, &c.Owner.UpdatedAt,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return &c, nil
+}
+
 func (r *Repository) CreateUserReport(ctx context.Context, reporterID, reportedUserID, matchID int64, reason string) error {
 	_, err := r.db.Exec(ctx, `
 		insert into user_reports (reporter_id, reported_user_id, match_id, reason)
@@ -382,7 +503,7 @@ func (r *Repository) ListVisibleMatches(ctx context.Context, userID int64) ([]mo
 	rows, err := r.db.Query(ctx, `
 		select u.id, u.platform_user_id, u.platform_chat_id, coalesce(u.platform_dialog_id, ''), coalesce(u.profile_link, ''), coalesce(u.contact_phone, ''), coalesce(u.username, ''),
 		       coalesce(u.name, ''), coalesce(u.gender, ''), coalesce(u.preferred_gender, ''), coalesce(u.flow_state, ''), u.is_premium,
-		       u.status, u.restricted_until, coalesce(u.premium_offer_chat_id, ''), coalesce(u.premium_offer_message_id, ''), u.created_at, u.updated_at
+		       u.referrer_user_id, u.referral_contact_credits, u.referral_rewarded_at, u.status, u.restricted_until, coalesce(u.premium_offer_chat_id, ''), coalesce(u.premium_offer_message_id, ''), u.created_at, u.updated_at
 		from matches m
 		join users u on u.id = case when m.user1_id = $1 then m.user2_id else m.user1_id end
 		where (m.user1_id = $1 and hidden_by_user1 = false)
@@ -407,7 +528,7 @@ func (r *Repository) LatestContactRequest(ctx context.Context, userID int64) (*m
 	row := r.db.QueryRow(ctx, `
 		select u.id, u.platform_user_id, u.platform_chat_id, coalesce(u.platform_dialog_id, ''), coalesce(u.profile_link, ''), coalesce(u.contact_phone, ''), coalesce(u.username, ''),
 		       coalesce(u.name, ''), coalesce(u.gender, ''), coalesce(u.preferred_gender, ''), coalesce(u.flow_state, ''), u.is_premium,
-		       u.status, u.restricted_until, coalesce(u.premium_offer_chat_id, ''), coalesce(u.premium_offer_message_id, ''), u.created_at, u.updated_at
+		       u.referrer_user_id, u.referral_contact_credits, u.referral_rewarded_at, u.status, u.restricted_until, coalesce(u.premium_offer_chat_id, ''), coalesce(u.premium_offer_message_id, ''), u.created_at, u.updated_at
 		from views v
 		join users u on u.id = v.viewed_user_id
 		where v.viewer_id = $1 and v.action = 'like'
@@ -441,7 +562,7 @@ func (r *Repository) ListUsers(ctx context.Context, limit int) ([]models.User, e
 	rows, err := r.db.Query(ctx, `
 		select id, platform_user_id, platform_chat_id, coalesce(platform_dialog_id, ''), coalesce(profile_link, ''), coalesce(contact_phone, ''), coalesce(username, ''),
 		       coalesce(name, ''), coalesce(gender, ''), coalesce(preferred_gender, ''), coalesce(flow_state, ''), is_premium,
-		       status, restricted_until, coalesce(premium_offer_chat_id, ''), coalesce(premium_offer_message_id, ''), created_at, updated_at
+		       referrer_user_id, referral_contact_credits, referral_rewarded_at, status, restricted_until, coalesce(premium_offer_chat_id, ''), coalesce(premium_offer_message_id, ''), created_at, updated_at
 		from users
 		order by created_at desc
 		limit $1`, limit)
@@ -516,6 +637,9 @@ func (r *Repository) ResetUser(ctx context.Context, userID int64) error {
 	if _, err := tx.Exec(ctx, `delete from priority_queue where target_user_id = $1 or candidate_user_id = $1`, userID); err != nil {
 		return err
 	}
+	if _, err := tx.Exec(ctx, `delete from referral_contact_opens where user_id = $1 or opened_user_id = $1`, userID); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(ctx, `delete from user_reports where reporter_id = $1 or reported_user_id = $1`, userID); err != nil {
 		return err
 	}
@@ -540,7 +664,8 @@ func (r *Repository) ResetUser(ctx context.Context, userID int64) error {
 	if _, err := tx.Exec(ctx, `
 		update users set name = null, gender = null, preferred_gender = null,
 			profile_link = null, contact_phone = null,
-			flow_state = '', is_premium = false, status = 'active',
+			flow_state = '', is_premium = false, referrer_user_id = null,
+			referral_contact_credits = 0, referral_rewarded_at = null, status = 'active',
 			restricted_until = null, updated_at = now()
 		where id = $1`, userID); err != nil {
 		return err
@@ -552,6 +677,7 @@ func (r *Repository) ClearAllData(ctx context.Context) error {
 	_, err := r.db.Exec(ctx, `
 		truncate table
 			user_action_logs,
+			referral_contact_opens,
 			premium_payments,
 			user_reports,
 			video_reports,
@@ -585,7 +711,9 @@ func (r *Repository) restrictByCounts(ctx context.Context, reportedUserID int64,
 func scanUser(row pgx.Row) (*models.User, error) {
 	var u models.User
 	if err := row.Scan(&u.ID, &u.PlatformUserID, &u.PlatformChatID, &u.PlatformDialogID, &u.ProfileLink, &u.ContactPhone, &u.Username,
-		&u.Name, &u.Gender, &u.PreferredGender, &u.FlowState, &u.IsPremium, &u.Status, &u.RestrictedUntil, &u.PremiumOfferChatID, &u.PremiumOfferMessageID,
+		&u.Name, &u.Gender, &u.PreferredGender, &u.FlowState, &u.IsPremium,
+		&u.ReferrerUserID, &u.ReferralContactCredits, &u.ReferralRewardedAt,
+		&u.Status, &u.RestrictedUntil, &u.PremiumOfferChatID, &u.PremiumOfferMessageID,
 		&u.CreatedAt, &u.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound

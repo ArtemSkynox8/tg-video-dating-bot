@@ -9,6 +9,9 @@ create table users (
     preferred_gender text,
     flow_state text not null default '',
     is_premium boolean not null default false,
+    referrer_user_id bigint references users(id) on delete set null,
+    referral_contact_credits integer not null default 0,
+    referral_rewarded_at timestamptz,
     status text not null default 'active',
     restricted_until timestamptz,
     created_at timestamptz not null default now(),
@@ -98,6 +101,14 @@ create table premium_payments (
     created_at timestamptz not null default now()
 );
 
+create table referral_contact_opens (
+    id bigserial primary key,
+    user_id bigint not null references users(id) on delete cascade,
+    opened_user_id bigint not null references users(id) on delete cascade,
+    created_at timestamptz not null default now(),
+    unique (user_id, opened_user_id)
+);
+
 create table user_action_logs (
     id bigserial primary key,
     user_id bigint references users(id) on delete set null,
@@ -116,3 +127,5 @@ create index priority_queue_target_idx on priority_queue(target_user_id, expires
 create index video_reports_reported_idx on video_reports(reported_user_id, created_at);
 create index premium_payments_user_status_idx on premium_payments(user_id, status, created_at desc);
 create index premium_payments_external_idx on premium_payments(external_id);
+create index users_referrer_idx on users(referrer_user_id);
+create index referral_contact_opens_user_idx on referral_contact_opens(user_id, created_at desc);

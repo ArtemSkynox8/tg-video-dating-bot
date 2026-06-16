@@ -15,6 +15,9 @@ type User struct {
 	PreferredGender string
 	FlowState      string
 	IsPremium      bool
+	ReferrerUserID *int64
+	ReferralContactCredits int
+	ReferralRewardedAt *time.Time
 	Status         string
 	RestrictedUntil *time.Time
 	PremiumOfferChatID string

@@ -36,6 +36,9 @@ alter table users add column if not exists platform_dialog_id text not null defa
 alter table users add column if not exists contact_phone text;
 alter table users add column if not exists premium_offer_chat_id text;
 alter table users add column if not exists premium_offer_message_id text;
+alter table users add column if not exists referrer_user_id bigint references users(id) on delete set null;
+alter table users add column if not exists referral_contact_credits integer not null default 0;
+alter table users add column if not exists referral_rewarded_at timestamptz;
 
 create table if not exists videos (
     id bigserial primary key,
@@ -122,6 +125,14 @@ create table if not exists premium_payments (
 
 alter table premium_payments add column if not exists external_id text;
 
+create table if not exists referral_contact_opens (
+    id bigserial primary key,
+    user_id bigint not null references users(id) on delete cascade,
+    opened_user_id bigint not null references users(id) on delete cascade,
+    created_at timestamptz not null default now(),
+    unique (user_id, opened_user_id)
+);
+
 create table if not exists user_action_logs (
     id bigserial primary key,
     user_id bigint references users(id) on delete set null,
@@ -140,4 +151,6 @@ create index if not exists priority_queue_target_idx on priority_queue(target_us
 create index if not exists video_reports_reported_idx on video_reports(reported_user_id, created_at);
 create index if not exists premium_payments_user_status_idx on premium_payments(user_id, status, created_at desc);
 create index if not exists premium_payments_external_idx on premium_payments(external_id);
+create index if not exists users_referrer_idx on users(referrer_user_id);
+create index if not exists referral_contact_opens_user_idx on referral_contact_opens(user_id, created_at desc);
 `

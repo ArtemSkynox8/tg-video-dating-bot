@@ -39,12 +39,16 @@ type DatingService struct {
 	contactInstructionVideoPath  string
 	contactInstructionVideoToken string
 	contactInstructionVideoMu    sync.Mutex
+	fortuneWheelVideoID          string
+	fortuneWheelVideoPath        string
+	fortuneWheelVideoToken       string
+	fortuneWheelVideoMu          sync.Mutex
 	forwards                  map[string]maxapi.ForwardInfo
 	forwardsMu                sync.RWMutex
 }
 
-func NewDatingService(repo *repositories.Repository, max *maxapi.Client, adminIDs []string, publicBaseURL, returnToBotURL, premiumPrice, contactInstructionVideoID, contactInstructionVideoPath string) *DatingService {
-	return &DatingService{repo: repo, max: max, adminIDs: adminIDs, publicBaseURL: strings.TrimRight(publicBaseURL, "/"), returnToBotURL: strings.TrimSpace(returnToBotURL), premiumPrice: premiumPrice, contactInstructionVideoID: strings.TrimSpace(contactInstructionVideoID), contactInstructionVideoPath: strings.TrimSpace(contactInstructionVideoPath), forwards: map[string]maxapi.ForwardInfo{}}
+func NewDatingService(repo *repositories.Repository, max *maxapi.Client, adminIDs []string, publicBaseURL, returnToBotURL, premiumPrice, contactInstructionVideoID, contactInstructionVideoPath, fortuneWheelVideoID, fortuneWheelVideoPath string) *DatingService {
+	return &DatingService{repo: repo, max: max, adminIDs: adminIDs, publicBaseURL: strings.TrimRight(publicBaseURL, "/"), returnToBotURL: strings.TrimSpace(returnToBotURL), premiumPrice: premiumPrice, contactInstructionVideoID: strings.TrimSpace(contactInstructionVideoID), contactInstructionVideoPath: strings.TrimSpace(contactInstructionVideoPath), fortuneWheelVideoID: strings.TrimSpace(fortuneWheelVideoID), fortuneWheelVideoPath: strings.TrimSpace(fortuneWheelVideoPath), forwards: map[string]maxapi.ForwardInfo{}}
 }
 
 func (s *DatingService) HandleMessage(ctx context.Context, msg maxapi.MessageUpdate) error {
@@ -80,9 +84,9 @@ func (s *DatingService) HandleMessage(ctx context.Context, msg maxapi.MessageUpd
 	case text == "/profile":
 		return s.max.SendText(ctx, user.PlatformChatID, "Что хотите изменить?", editProfileButtons())
 	case text == "/subscription":
-		return s.SendSubscriptionStatus(ctx, *user)
+		return s.SendSubscriptionStatusV2(ctx, *user)
 	case text == "/premium":
-		return s.SendPremiumOffer(ctx, *user)
+		return s.SendPremiumOfferV2(ctx, *user)
 	case strings.HasPrefix(text, "/link "):
 		return s.SaveProfileLink(ctx, *user, strings.TrimSpace(strings.TrimPrefix(text, "/link ")))
 	case text == "/admin" && s.isAdmin(*user):
@@ -255,7 +259,15 @@ func (s *DatingService) HandleCallback(ctx context.Context, cb maxapi.CallbackUp
 	case "main_menu":
 		return s.max.SendText(ctx, cb.Chat.ID, "Главное меню:", mainMenuButtons())
 	case "premium", "subscription":
-		return s.SendSubscriptionStatus(ctx, *user)
+		return s.SendSubscriptionStatusV2(ctx, *user)
+	case "random_contact":
+		return s.OpenRandomReferralContact(ctx, *user)
+	case "invite_friend":
+		return s.SendReferralInvite(ctx, *user)
+	case "payment_soon":
+		return s.max.SendText(ctx, cb.Chat.ID, "Оплата пока подключается.", [][]maxapi.Button{
+			{{Text: "☰ Главное меню", Payload: "main_menu"}},
+		})
 	case "unsubscribe":
 		return s.SendUnsubscribeStub(ctx, *user)
 	case "missing_profile_link":
@@ -352,6 +364,65 @@ func (s *DatingService) SendSubscriptionOffer(ctx context.Context, user models.U
 		{{Text: "📄 Оферта", URL: offerURL}},
 		{{Text: "☰ Главное меню", Payload: "main_menu"}},
 	})
+}
+
+func (s *DatingService) SendPremiumOfferV2(ctx context.Context, user models.User) error {
+	return s.SendSubscriptionStatusV2(ctx, user)
+}
+
+func (s *DatingService) SendSubscriptionStatusV2(ctx context.Context, user models.User) error {
+	htmlText, plainText := s.subscriptionOfferText(user)
+	return s.max.SendFormattedText(ctx, user.PlatformChatID, htmlText, plainText, premiumOfferButtons(s.premiumPaymentURL(user)))
+}
+
+func (s *DatingService) subscriptionOfferText(user models.User) (string, string) {
+	offerURL := s.publicBaseURL + "/offer"
+	status := "Подписка не подключена"
+	if user.IsPremium {
+		status = "Подписка подключена"
+	}
+	htmlText := `<b>💎 Подписка Premium</b>
+
+<b>Что входит:</b>
+• доступ к контактам пользователей;
+• возможность писать первым без взаимного лайка;
+• неограниченный просмотр кружков.
+
+<b>Подписка с автосписанием:</b>
+• 🎁 Пригласить друга — получить 1 рандомный контакт из последних 10 кружков;
+• 🔥 49 ₽ / 3 дня;
+• 💎 199 ₽ / неделя.
+
+Переходя к оплате, вы соглашаетесь с <a href="` + html.EscapeString(offerURL) + `">офертой</a>.
+
+<b>Статус:</b>
+` + html.EscapeString(status)
+	plainText := `💎 Подписка Premium
+
+Что входит:
+• доступ к контактам пользователей;
+• возможность писать первым без взаимного лайка;
+• неограниченный просмотр кружков.
+
+Подписка с автосписанием:
+• 🎁 Пригласить друга — получить 1 рандомный контакт из последних 10 кружков;
+• 🔥 49 ₽ / 3 дня;
+• 💎 199 ₽ / неделя.
+
+Переходя к оплате, вы соглашаетесь с офертой (` + offerURL + `).
+
+Статус:
+` + status
+	return htmlText, plainText
+}
+
+func premiumOfferButtons(paymentURL string) [][]maxapi.Button {
+	return [][]maxapi.Button{
+		{{Text: "🎲 Открыть рандомный контакт", Payload: "random_contact"}},
+		{{Text: "🔥 49 ₽ / 3 дня", Payload: "payment_soon"}},
+		{{Text: "💎 199 ₽ / неделя", URL: paymentURL}},
+		{{Text: "☰ Главное меню", Payload: "main_menu"}},
+	}
 }
 
 func (s *DatingService) SendUnsubscribeStub(ctx context.Context, user models.User) error {
@@ -665,6 +736,9 @@ func (s *DatingService) HandleBrowseAction(ctx context.Context, user models.User
 	if err := s.repo.CreateView(ctx, user.ID, videoID, ownerID, action); err != nil {
 		return err
 	}
+	if err := s.NotifyReferralCompleted(ctx, user.ID); err != nil {
+		log.Printf("complete referral user=%d: %v", user.ID, err)
+	}
 	if action == models.ActionLike {
 		owner, err := s.repo.GetUserByID(ctx, ownerID)
 		if err != nil {
@@ -675,7 +749,7 @@ func (s *DatingService) HandleBrowseAction(ctx context.Context, user models.User
 			return err
 		}
 		if !reverse && !user.IsPremium {
-			return s.SendPremiumOffer(ctx, user)
+			return s.SendPremiumOfferV2(ctx, user)
 		}
 		if _, err := s.repo.CreateLike(ctx, user.ID, ownerID); err != nil {
 			return err
@@ -705,6 +779,9 @@ func (s *DatingService) HandleLikeOnly(ctx context.Context, user models.User, ch
 	_ = s.max.DeleteMessage(ctx, chatID, messageID)
 	if err := s.repo.CreateView(ctx, user.ID, videoID, ownerID, models.ActionLike); err != nil {
 		return err
+	}
+	if err := s.NotifyReferralCompleted(ctx, user.ID); err != nil {
+		log.Printf("complete referral user=%d: %v", user.ID, err)
 	}
 	if _, err := s.repo.CreateLike(ctx, user.ID, ownerID); err != nil {
 		return err
@@ -740,6 +817,91 @@ func (s *DatingService) sendContactAccess(ctx context.Context, recipientID, titl
 		return s.max.SendContactCard(ctx, recipientID, displayName(target), target.ContactPhone)
 	}
 	return nil
+}
+
+func (s *DatingService) NotifyReferralCompleted(ctx context.Context, userID int64) error {
+	referrer, err := s.repo.CompleteReferralIfNeeded(ctx, userID)
+	if err != nil || referrer == nil {
+		return err
+	}
+	return s.max.SendText(ctx, referrer.PlatformChatID, "Вам доступен один рандомный контакт.", [][]maxapi.Button{
+		{{Text: "🎲 Открыть", Payload: "random_contact"}},
+	})
+}
+
+func (s *DatingService) SendReferralInvite(ctx context.Context, user models.User) error {
+	inviteURL := s.botStartURL(fmt.Sprintf("ref_%d", user.ID))
+	text := "🎁 Пригласите друга\n\n" +
+		"Если друг перейдет по вашей ссылке, зарегистрируется и посмотрит хотя бы один кружок, вам станет доступен 1 рандомный контакт из последних 10 кружков."
+	if inviteURL != "" {
+		text += "\n\n" + inviteURL
+	}
+	return s.max.SendText(ctx, user.PlatformChatID, text, referralInviteButtons(inviteURL))
+}
+
+func (s *DatingService) OpenRandomReferralContact(ctx context.Context, user models.User) error {
+	if user.ReferralContactCredits <= 0 {
+		return s.SendReferralInvite(ctx, user)
+	}
+	candidate, err := s.repo.FindRandomReferralContact(ctx, user.ID)
+	if err != nil {
+		if err == repositories.ErrNotFound {
+			return s.max.SendText(ctx, user.PlatformChatID, "Пока нет доступных бонусных контактов. Попробуйте позже.", [][]maxapi.Button{
+				{{Text: "☰ Главное меню", Payload: "main_menu"}},
+			})
+		}
+		return err
+	}
+	ok, err := s.repo.ConsumeReferralContactCredit(ctx, user.ID, candidate.Owner.ID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return s.SendReferralInvite(ctx, user)
+	}
+	if err := s.SendFortuneWheelVideo(ctx, user); err != nil {
+		log.Printf("send fortune wheel user=%s: %v", user.PlatformUserID, err)
+	}
+	time.Sleep(time.Second)
+	if _, err := s.max.SendMediaToDialogOrUser(ctx, user.PlatformDialogID, user.PlatformChatID, candidate.PlatformMediaID, displayName(candidate.Owner), nil); err != nil {
+		return err
+	}
+	return s.max.SendText(ctx, user.PlatformChatID, "Вы открыли контакт "+displayName(candidate.Owner), randomContactButtons(candidate.Owner))
+}
+
+func (s *DatingService) SendFortuneWheelVideo(ctx context.Context, user models.User) error {
+	token, err := s.FortuneWheelVideoToken(ctx)
+	if err != nil || token == "" {
+		return err
+	}
+	_, err = s.max.SendMediaToDialogOrUser(ctx, user.PlatformDialogID, user.PlatformChatID, token, "", nil)
+	return err
+}
+
+func (s *DatingService) FortuneWheelVideoToken(ctx context.Context) (string, error) {
+	if s.fortuneWheelVideoID != "" {
+		return s.fortuneWheelVideoID, nil
+	}
+	if s.fortuneWheelVideoPath == "" {
+		return "", nil
+	}
+	s.fortuneWheelVideoMu.Lock()
+	defer s.fortuneWheelVideoMu.Unlock()
+	if s.fortuneWheelVideoToken != "" {
+		return s.fortuneWheelVideoToken, nil
+	}
+	if _, err := os.Stat(s.fortuneWheelVideoPath); err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	token, err := s.max.UploadVideo(ctx, s.fortuneWheelVideoPath)
+	if err != nil {
+		return "", err
+	}
+	s.fortuneWheelVideoToken = token
+	return token, nil
 }
 
 func (s *DatingService) HandleVideoReport(ctx context.Context, user models.User, chatID, messageID, videoIDText, ownerIDText, reason string) error {
@@ -852,6 +1014,13 @@ func (s *DatingService) botStartURL(payload string) string {
 
 func (s *DatingService) HandleStartPayload(ctx context.Context, user models.User, payload string) error {
 	payload = strings.TrimSpace(strings.TrimPrefix(payload, "start="))
+	if strings.HasPrefix(payload, "ref_") {
+		referrerID := parseID(strings.TrimPrefix(payload, "ref_"))
+		if err := s.repo.SetReferrer(ctx, user.ID, referrerID); err != nil {
+			return err
+		}
+		return s.Start(ctx, user)
+	}
 	payload = strings.TrimPrefix(payload, "match_actions:")
 	payload = strings.TrimPrefix(payload, "match_actions_")
 	if payload == "" {
@@ -1421,6 +1590,29 @@ func contactButtons(user models.User, includeMatches bool) [][]maxapi.Button {
 		buttons = append(buttons, []maxapi.Button{{Text: "📬 Взаимные лайки", Payload: "matches"}})
 	}
 	buttons = append(buttons, []maxapi.Button{{Text: "▶️ Продолжить просмотр", Payload: "browse"}})
+	return buttons
+}
+
+func randomContactButtons(user models.User) [][]maxapi.Button {
+	buttons := [][]maxapi.Button{}
+	if url := profileURL(user); url != "" {
+		buttons = append(buttons, []maxapi.Button{{Text: "💬 Написать " + shortName(user.Name), URL: url}})
+	} else if strings.TrimSpace(user.ContactPhone) == "" {
+		buttons = append(buttons, []maxapi.Button{{Text: "💬 Ссылка профиля недоступна", Payload: "missing_profile_link"}})
+	}
+	buttons = append(buttons,
+		[]maxapi.Button{{Text: "▶️ Продолжить просмотр", Payload: "browse"}},
+		[]maxapi.Button{{Text: "☰ Главное меню", Payload: "main_menu"}},
+	)
+	return buttons
+}
+
+func referralInviteButtons(inviteURL string) [][]maxapi.Button {
+	buttons := [][]maxapi.Button{}
+	if inviteURL != "" {
+		buttons = append(buttons, []maxapi.Button{{Text: "🎁 Поделиться", URL: inviteURL}})
+	}
+	buttons = append(buttons, []maxapi.Button{{Text: "☰ Главное меню", Payload: "main_menu"}})
 	return buttons
 }
 
