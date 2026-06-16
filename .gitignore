@@ -2,4 +2,3 @@
 bin/
 tmp/
 *.log
-assets/fake-circles/*-circle.mp4

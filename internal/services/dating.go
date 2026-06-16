@@ -12,11 +12,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -84,65 +82,22 @@ func (s *DatingService) SeedFakeCircles(ctx context.Context) {
 			log.Printf("fake circle missing id=%s path=%s: %v", seed.ID, videoPath, err)
 			continue
 		}
-		uploadPath, err := prepareFakeCircleVideo(ctx, videoPath)
-		if err != nil {
-			log.Printf("convert fake circle id=%s path=%s: %v", seed.ID, videoPath, err)
-			uploadPath = videoPath
-		}
 		if user, err := s.repo.GetUserByPlatformID(ctx, seed.ID); err == nil {
-			if video, err := s.repo.GetActiveVideoByUser(ctx, user.ID); err == nil && video.StorageURL == uploadPath && video.PlatformMediaID != "" {
+			if video, err := s.repo.GetActiveVideoByUser(ctx, user.ID); err == nil && video.StorageURL == videoPath && video.PlatformMediaID != "" {
 				continue
 			}
 		}
-		token, err := s.max.UploadVideo(ctx, uploadPath)
+		token, err := s.max.UploadVideo(ctx, videoPath)
 		if err != nil {
-			log.Printf("upload fake circle id=%s path=%s: %v", seed.ID, uploadPath, err)
+			log.Printf("upload fake circle id=%s path=%s: %v", seed.ID, videoPath, err)
 			continue
 		}
-		if err := s.repo.UpsertFakeVideoUser(ctx, seed.ID, seed.Name, seed.Gender, token, uploadPath, 0); err != nil {
+		if err := s.repo.UpsertFakeVideoUser(ctx, seed.ID, seed.Name, seed.Gender, token, videoPath, 0); err != nil {
 			log.Printf("save fake circle id=%s path=%s: %v", seed.ID, videoPath, err)
 			continue
 		}
-		log.Printf("fake circle seeded id=%s path=%s", seed.ID, uploadPath)
+		log.Printf("fake circle seeded id=%s path=%s", seed.ID, videoPath)
 	}
-}
-
-func prepareFakeCircleVideo(ctx context.Context, inputPath string) (string, error) {
-	ext := filepath.Ext(inputPath)
-	outputPath := strings.TrimSuffix(inputPath, ext) + "-circle.mp4"
-	if info, err := os.Stat(outputPath); err == nil && info.Size() > 0 {
-		return outputPath, nil
-	}
-	convertCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(convertCtx, "ffmpeg",
-		"-y",
-		"-fflags", "+genpts",
-		"-i", inputPath,
-		"-map", "0:v:0",
-		"-map", "0:a?",
-		"-t", strconv.Itoa(30),
-		"-vf", `fps=30,crop=min(iw\,ih):min(iw\,ih),scale=480:480,setsar=1,setpts=N/(30*TB),format=yuv420p`,
-		"-af", "aresample=async=1:first_pts=0",
-		"-c:v", "libx264",
-		"-profile:v", "baseline",
-		"-level", "3.0",
-		"-crf", "22",
-		"-preset", "veryfast",
-		"-bf", "0",
-		"-r", "30",
-		"-c:a", "aac",
-		"-b:a", "128k",
-		"-shortest",
-		"-avoid_negative_ts", "make_zero",
-		"-movflags", "+faststart",
-		outputPath,
-	)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
-	}
-	return outputPath, nil
 }
 
 func (s *DatingService) HandleMessage(ctx context.Context, msg maxapi.MessageUpdate) error {
@@ -858,14 +813,8 @@ func (s *DatingService) HandleBrowseAction(ctx context.Context, user models.User
 			return err
 		}
 		if owner.IsFake() {
-			createdLike, err := s.repo.CreateLike(ctx, user.ID, ownerID)
-			if err != nil {
-				return err
-			}
-			if createdLike {
-				s.NotifyAdminEvent(ctx, user, "Поставил лайк", fmt.Sprintf("Target: %d", ownerID))
-			}
-			return s.ackLikeAndShowNext(ctx, user, chatID, messageID, callbackID)
+			s.deleteBrowseMessage(ctx, user, chatID, messageID)
+			return s.SendPremiumOfferV2(ctx, user)
 		}
 		reverse, err := s.repo.HasReverseLike(ctx, user.ID, ownerID)
 		if err != nil {
