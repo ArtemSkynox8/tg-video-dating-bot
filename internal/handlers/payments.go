@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -83,6 +84,7 @@ func (h *PaymentHandler) pay(w http.ResponseWriter, r *http.Request) {
 
 	payment, err := h.createYooKassaPayment(r.Context(), user.ID, user.PlatformUserID, plan)
 	if err != nil {
+		log.Printf("create yookassa payment user=%s plan=%s amount=%s: %v", user.PlatformUserID, plan.Code, plan.Amount, err)
 		h.renderPayMessage(w, "Оплата временно недоступна", "Не удалось создать платёж. Попробуйте позже.")
 		return
 	}
@@ -430,8 +432,13 @@ func (h *PaymentHandler) createYooKassaPayment(ctx context.Context, userID int64
 		},
 	}
 	var out yooKassaPayment
-	if err := h.yooKassaRequest(ctx, http.MethodPost, "/v3/payments", body, &out, "initial-"+fmt.Sprint(userID)+"-"+plan.Code+"-"+fmt.Sprint(time.Now().UnixNano())); err != nil {
-		return nil, err
+	idempotenceBase := "initial-" + fmt.Sprint(userID) + "-" + plan.Code + "-" + fmt.Sprint(time.Now().UnixNano())
+	if err := h.yooKassaRequest(ctx, http.MethodPost, "/v3/payments", body, &out, idempotenceBase); err != nil {
+		log.Printf("create yookassa payment with saved method failed user=%d plan=%s: %v", userID, plan.Code, err)
+		delete(body, "save_payment_method")
+		if retryErr := h.yooKassaRequest(ctx, http.MethodPost, "/v3/payments", body, &out, idempotenceBase+"-nosave"); retryErr != nil {
+			return nil, retryErr
+		}
 	}
 	if out.ID == "" || out.Confirmation.ConfirmationURL == "" {
 		return nil, fmt.Errorf("yookassa response missing payment confirmation")
@@ -505,7 +512,8 @@ func (h *PaymentHandler) yooKassaRequest(ctx context.Context, method, path strin
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("yookassa status %d", resp.StatusCode)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("yookassa status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
 }

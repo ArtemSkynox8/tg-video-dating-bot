@@ -364,7 +364,7 @@ func (r *Repository) CreateOfferReachedLog(ctx context.Context, userID int64, re
 	}
 	if _, err := tx.Exec(ctx, `
 		insert into user_action_logs (user_id, action, payload)
-		values ($1, 'offer_reached', jsonb_build_object('tag', nullif($2, ''), 'reason', $3, 'type', $4))`,
+		values ($1, 'offer_reached', jsonb_build_object('tag', nullif($2::text, ''), 'reason', $3::text, 'type', $4::text))`,
 		userID, tag, reason, offerType); err != nil {
 		return "", "", err
 	}
