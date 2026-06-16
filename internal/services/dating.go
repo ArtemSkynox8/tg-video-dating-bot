@@ -12,9 +12,11 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -63,10 +65,12 @@ type DatingService struct {
 	fortuneWheelVideoMu          sync.Mutex
 	forwards                  map[string]maxapi.ForwardInfo
 	forwardsMu                sync.RWMutex
+	browseMessages           map[string]string
+	browseMessagesMu         sync.Mutex
 }
 
 func NewDatingService(repo *repositories.Repository, max *maxapi.Client, adminIDs []string, publicBaseURL, returnToBotURL, premiumPrice, contactInstructionVideoID, contactInstructionVideoPath, fakeCirclesDir, fortuneWheelVideoID, fortuneWheelVideoPath string) *DatingService {
-	return &DatingService{repo: repo, max: max, adminIDs: adminIDs, publicBaseURL: strings.TrimRight(publicBaseURL, "/"), returnToBotURL: strings.TrimSpace(returnToBotURL), premiumPrice: premiumPrice, contactInstructionVideoID: strings.TrimSpace(contactInstructionVideoID), contactInstructionVideoPath: strings.TrimSpace(contactInstructionVideoPath), fakeCirclesDir: strings.TrimSpace(fakeCirclesDir), fortuneWheelVideoID: strings.TrimSpace(fortuneWheelVideoID), fortuneWheelVideoPath: strings.TrimSpace(fortuneWheelVideoPath), forwards: map[string]maxapi.ForwardInfo{}}
+	return &DatingService{repo: repo, max: max, adminIDs: adminIDs, publicBaseURL: strings.TrimRight(publicBaseURL, "/"), returnToBotURL: strings.TrimSpace(returnToBotURL), premiumPrice: premiumPrice, contactInstructionVideoID: strings.TrimSpace(contactInstructionVideoID), contactInstructionVideoPath: strings.TrimSpace(contactInstructionVideoPath), fakeCirclesDir: strings.TrimSpace(fakeCirclesDir), fortuneWheelVideoID: strings.TrimSpace(fortuneWheelVideoID), fortuneWheelVideoPath: strings.TrimSpace(fortuneWheelVideoPath), forwards: map[string]maxapi.ForwardInfo{}, browseMessages: map[string]string{}}
 }
 
 func (s *DatingService) SeedFakeCircles(ctx context.Context) {
@@ -80,22 +84,65 @@ func (s *DatingService) SeedFakeCircles(ctx context.Context) {
 			log.Printf("fake circle missing id=%s path=%s: %v", seed.ID, videoPath, err)
 			continue
 		}
+		uploadPath, err := prepareFakeCircleVideo(ctx, videoPath)
+		if err != nil {
+			log.Printf("convert fake circle id=%s path=%s: %v", seed.ID, videoPath, err)
+			uploadPath = videoPath
+		}
 		if user, err := s.repo.GetUserByPlatformID(ctx, seed.ID); err == nil {
-			if video, err := s.repo.GetActiveVideoByUser(ctx, user.ID); err == nil && video.StorageURL == videoPath && video.PlatformMediaID != "" {
+			if video, err := s.repo.GetActiveVideoByUser(ctx, user.ID); err == nil && video.StorageURL == uploadPath && video.PlatformMediaID != "" {
 				continue
 			}
 		}
-		token, err := s.max.UploadVideo(ctx, videoPath)
+		token, err := s.max.UploadVideo(ctx, uploadPath)
 		if err != nil {
-			log.Printf("upload fake circle id=%s path=%s: %v", seed.ID, videoPath, err)
+			log.Printf("upload fake circle id=%s path=%s: %v", seed.ID, uploadPath, err)
 			continue
 		}
-		if err := s.repo.UpsertFakeVideoUser(ctx, seed.ID, seed.Name, seed.Gender, token, videoPath, 0); err != nil {
+		if err := s.repo.UpsertFakeVideoUser(ctx, seed.ID, seed.Name, seed.Gender, token, uploadPath, 0); err != nil {
 			log.Printf("save fake circle id=%s path=%s: %v", seed.ID, videoPath, err)
 			continue
 		}
-		log.Printf("fake circle seeded id=%s path=%s", seed.ID, videoPath)
+		log.Printf("fake circle seeded id=%s path=%s", seed.ID, uploadPath)
 	}
+}
+
+func prepareFakeCircleVideo(ctx context.Context, inputPath string) (string, error) {
+	ext := filepath.Ext(inputPath)
+	outputPath := strings.TrimSuffix(inputPath, ext) + "-circle.mp4"
+	if info, err := os.Stat(outputPath); err == nil && info.Size() > 0 {
+		return outputPath, nil
+	}
+	convertCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(convertCtx, "ffmpeg",
+		"-y",
+		"-fflags", "+genpts",
+		"-i", inputPath,
+		"-map", "0:v:0",
+		"-map", "0:a?",
+		"-t", strconv.Itoa(30),
+		"-vf", `fps=30,crop=min(iw\,ih):min(iw\,ih),scale=480:480,setsar=1,setpts=N/(30*TB),format=yuv420p`,
+		"-af", "aresample=async=1:first_pts=0",
+		"-c:v", "libx264",
+		"-profile:v", "baseline",
+		"-level", "3.0",
+		"-crf", "22",
+		"-preset", "veryfast",
+		"-bf", "0",
+		"-r", "30",
+		"-c:a", "aac",
+		"-b:a", "128k",
+		"-shortest",
+		"-avoid_negative_ts", "make_zero",
+		"-movflags", "+faststart",
+		outputPath,
+	)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return outputPath, nil
 }
 
 func (s *DatingService) HandleMessage(ctx context.Context, msg maxapi.MessageUpdate) error {
@@ -768,6 +815,7 @@ func (s *DatingService) SendNextCandidate(ctx context.Context, user models.User)
 		}
 		return s.SendBrowseContactInstructions(ctx, user)
 	}
+	s.deleteBrowseMessage(ctx, user, user.PlatformChatID, "")
 	candidate, err := s.repo.FindCandidate(ctx, user.ID)
 	if err != nil {
 		if err == repositories.ErrNotFound {
@@ -778,8 +826,12 @@ func (s *DatingService) SendNextCandidate(ctx context.Context, user models.User)
 		}
 		return err
 	}
-	_, err = s.max.SendMediaToDialogOrUser(ctx, user.PlatformDialogID, user.PlatformChatID, candidate.PlatformMediaID, candidate.Owner.Name, browseButtons(candidate.ID, candidate.Owner.ID))
-	return err
+	messageID, err := s.max.SendMediaToDialogOrUser(ctx, user.PlatformDialogID, user.PlatformChatID, candidate.PlatformMediaID, candidate.Owner.Name, browseButtons(candidate.ID, candidate.Owner.ID))
+	if err != nil {
+		return err
+	}
+	s.rememberBrowseMessage(user, messageID)
+	return nil
 }
 
 func (s *DatingService) ResetBrowse(ctx context.Context, user models.User) error {
@@ -820,7 +872,7 @@ func (s *DatingService) HandleBrowseAction(ctx context.Context, user models.User
 			return err
 		}
 		if !reverse && !user.IsPremium {
-			_ = s.max.DeleteMessage(ctx, chatID, messageID)
+			s.deleteBrowseMessage(ctx, user, chatID, messageID)
 			return s.SendPremiumOfferV2(ctx, user)
 		}
 		createdLike, err := s.repo.CreateLike(ctx, user.ID, ownerID)
@@ -834,7 +886,7 @@ func (s *DatingService) HandleBrowseAction(ctx context.Context, user models.User
 			return err
 		}
 		if reverse {
-			_ = s.max.DeleteMessage(ctx, chatID, messageID)
+			s.deleteBrowseMessage(ctx, user, chatID, messageID)
 			if err := s.repo.CreateMatch(ctx, user.ID, ownerID); err != nil {
 				return err
 			}
@@ -843,10 +895,10 @@ func (s *DatingService) HandleBrowseAction(ctx context.Context, user models.User
 			}
 			return s.sendContactAccess(ctx, chatID, "❤️ У вас новый взаимный лайк!", *owner, true)
 		}
-		_ = s.max.DeleteMessage(ctx, chatID, messageID)
+		s.deleteBrowseMessage(ctx, user, chatID, messageID)
 		return s.sendContactAccess(ctx, chatID, "💎 Premium: контакт открыт без взаимного лайка.", *owner, false)
 	}
-	_ = s.max.DeleteMessage(ctx, chatID, messageID)
+	s.deleteBrowseMessage(ctx, user, chatID, messageID)
 	return s.SendNextCandidate(ctx, user)
 }
 
@@ -883,7 +935,7 @@ func (s *DatingService) HandleLikeOnly(ctx context.Context, user models.User, ch
 		return err
 	}
 	if reverse {
-		_ = s.max.DeleteMessage(ctx, chatID, messageID)
+		s.deleteBrowseMessage(ctx, user, chatID, messageID)
 		if err := s.repo.CreateMatch(ctx, user.ID, ownerID); err != nil {
 			return err
 		}
@@ -901,11 +953,38 @@ func (s *DatingService) ackLikeAndShowNext(ctx context.Context, user models.User
 	}
 	heartMessageID, _ := s.max.SendTextWithID(ctx, user.PlatformChatID, "❤️", nil)
 	time.Sleep(time.Second)
-	_ = s.max.DeleteMessage(ctx, chatID, messageID)
+	s.deleteBrowseMessage(ctx, user, chatID, messageID)
 	if heartMessageID != "" {
 		_ = s.max.DeleteMessage(ctx, user.PlatformChatID, heartMessageID)
 	}
 	return s.SendNextCandidate(ctx, user)
+}
+
+func (s *DatingService) rememberBrowseMessage(user models.User, messageID string) {
+	if messageID == "" {
+		return
+	}
+	s.browseMessagesMu.Lock()
+	defer s.browseMessagesMu.Unlock()
+	s.browseMessages[user.PlatformUserID] = messageID
+}
+
+func (s *DatingService) deleteBrowseMessage(ctx context.Context, user models.User, chatID, messageID string) {
+	if messageID == "" {
+		s.browseMessagesMu.Lock()
+		messageID = s.browseMessages[user.PlatformUserID]
+		delete(s.browseMessages, user.PlatformUserID)
+		s.browseMessagesMu.Unlock()
+	} else {
+		s.browseMessagesMu.Lock()
+		if s.browseMessages[user.PlatformUserID] == messageID {
+			delete(s.browseMessages, user.PlatformUserID)
+		}
+		s.browseMessagesMu.Unlock()
+	}
+	if messageID != "" {
+		_ = s.max.DeleteMessage(ctx, chatID, messageID)
+	}
 }
 
 func (s *DatingService) sendContactAccess(ctx context.Context, recipientID, title string, target models.User, includeMatches bool) error {
