@@ -68,6 +68,7 @@ func (h *PaymentHandler) offer(w http.ResponseWriter, _ *http.Request) {
 func (h *PaymentHandler) pay(w http.ResponseWriter, r *http.Request) {
 	platformUserID := strings.TrimSpace(r.URL.Query().Get("u"))
 	plan := premiumPlanFromRequest(r)
+	log.Printf("pay start user=%s plan=%s", platformUserID, plan.Code)
 	user, err := h.repo.GetUserByPlatformID(r.Context(), platformUserID)
 	if err != nil {
 		h.renderPayMessage(w, "Пользователь не найден", "Вернитесь в бот и нажмите кнопку оплаты ещё раз.")
@@ -92,11 +93,13 @@ func (h *PaymentHandler) pay(w http.ResponseWriter, r *http.Request) {
 		h.renderPayMessage(w, "Оплата временно недоступна", "Не удалось сохранить платёж. Попробуйте позже.")
 		return
 	}
+	log.Printf("pay redirect user=%s plan=%s payment=%s status=%s", user.PlatformUserID, plan.Code, payment.ID, payment.Status)
 	http.Redirect(w, r, payment.Confirmation.ConfirmationURL, http.StatusFound)
 }
 
 func (h *PaymentHandler) success(w http.ResponseWriter, r *http.Request) {
 	platformUserID := strings.TrimSpace(r.URL.Query().Get("u"))
+	log.Printf("pay success return user=%s", platformUserID)
 	user, err := h.repo.GetUserByPlatformID(r.Context(), platformUserID)
 	if err != nil {
 		h.renderPayMessage(w, "Пользователь не найден", "Вернитесь в бот и нажмите кнопку оплаты ещё раз.")
@@ -109,9 +112,11 @@ func (h *PaymentHandler) success(w http.ResponseWriter, r *http.Request) {
 	}
 	payment, err := h.getYooKassaPayment(r.Context(), storedPayment.ExternalID)
 	if err != nil {
+		log.Printf("pay success get yookassa user=%s payment=%s: %v", platformUserID, storedPayment.ExternalID, err)
 		h.renderPayMessage(w, "Проверяем оплату", "Касса пока не вернула результат. Подождите минуту и откройте эту страницу снова.")
 		return
 	}
+	log.Printf("pay success status user=%s payment=%s status=%s paid=%v", platformUserID, storedPayment.ExternalID, payment.Status, payment.Paid)
 	if err := h.repo.UpdatePremiumPaymentStatus(r.Context(), storedPayment.ExternalID, payment.Status, payment.PaymentMethod.ID); err != nil {
 		h.renderPayMessage(w, "Ошибка сохранения", "Оплата найдена, но статус не сохранился. Напишите администратору.")
 		return
@@ -124,6 +129,7 @@ func (h *PaymentHandler) success(w http.ResponseWriter, r *http.Request) {
 	paymentMethodID := firstNonEmptyPayment(payment.PaymentMethod.ID, storedPayment.PaymentMethodID)
 	until := time.Now().AddDate(0, 0, plan.PeriodDays)
 	if err := h.repo.SetPremiumSubscription(r.Context(), user.ID, plan.Code, plan.Amount, plan.PeriodDays, paymentMethodID, until); err != nil {
+		log.Printf("pay success set premium user=%s payment=%s: %v", platformUserID, storedPayment.ExternalID, err)
 		h.renderPayMessage(w, "Premium оплачен", "Оплата прошла, но доступ не включился автоматически. Напишите администратору.")
 		return
 	}
@@ -157,6 +163,7 @@ func (h *PaymentHandler) yooKassaWebhook(w http.ResponseWriter, r *http.Request)
 		w.WriteHeader(http.StatusOK)
 		return
 	}
+	log.Printf("pay webhook event=%s payment=%s status=%s paid=%v", in.Event, in.Object.ID, in.Object.Status, in.Object.Paid)
 	if err := h.applyYooKassaPayment(r.Context(), in.Object); err != nil {
 		log.Printf("apply yookassa webhook payment=%s event=%s: %v", in.Object.ID, in.Event, err)
 		http.Error(w, "temporary error", http.StatusInternalServerError)
@@ -546,11 +553,11 @@ func (h *PaymentHandler) createYooKassaRecurringPayment(ctx context.Context, sub
 }
 
 func (h *PaymentHandler) yooKassaReturnURL(platformUserID string) string {
-	botURL := strings.TrimSpace(h.cfg.ReturnToBotURL)
-	if botURL != "" {
-		return botURL
+	baseURL := strings.TrimRight(strings.TrimSpace(h.cfg.PublicBaseURL), "/")
+	if baseURL != "" {
+		return baseURL + "/pay/success?u=" + url.QueryEscape(platformUserID)
 	}
-	return strings.TrimRight(h.cfg.PublicBaseURL, "/") + "/pay/success?u=" + url.QueryEscape(platformUserID)
+	return strings.TrimSpace(h.cfg.ReturnToBotURL)
 }
 
 func (h *PaymentHandler) yooKassaReceipt(amount, description string) map[string]any {
