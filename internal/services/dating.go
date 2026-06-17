@@ -577,7 +577,8 @@ func (s *DatingService) AdminResetStore(ctx context.Context, user models.User) e
 	if err := s.repo.ClearAllData(ctx); err != nil {
 		return err
 	}
-	return s.max.SendText(ctx, user.PlatformChatID, "База полностью очищена.", nil)
+	go s.SeedFakeCircles(context.Background())
+	return s.max.SendText(ctx, user.PlatformChatID, "База полностью очищена. Фейковые кружки пересоздаются.", nil)
 }
 
 func (s *DatingService) SaveRecordedVideo(ctx context.Context, user models.User, videoID int64) error {
