@@ -145,7 +145,7 @@ func (h *PaymentHandler) success(w http.ResponseWriter, r *http.Request) {
 		_ = h.repo.ClearPremiumOfferMessage(r.Context(), user.ID)
 	}
 	if target, err := h.repo.LatestContactRequest(r.Context(), user.ID); err == nil {
-		_ = h.sendPremiumContact(r.Context(), *user, *target)
+		_ = h.unlockPremiumContact(r.Context(), *user, *target)
 	}
 	h.renderPayMessage(w, "Premium активирован", "Подписка активна до "+until.Format("02.01.2006 15:04")+". Сейчас вернём вас в бот.", true)
 }
@@ -209,7 +209,7 @@ func (h *PaymentHandler) applyYooKassaPayment(ctx context.Context, payment yooKa
 			_ = h.repo.ClearPremiumOfferMessage(ctx, user.ID)
 		}
 		if target, err := h.repo.LatestContactRequest(ctx, user.ID); err == nil {
-			_ = h.sendPremiumContact(ctx, *user, *target)
+			_ = h.unlockPremiumContact(ctx, *user, *target)
 			return nil
 		}
 		_ = h.max.SendText(ctx, user.PlatformChatID, "💎 Premium активирован.\n\nПодписка активна до "+until.Format("02.01.2006 15:04")+".", [][]maxapi.Button{
@@ -324,6 +324,16 @@ func (h *PaymentHandler) sendPremiumContact(ctx context.Context, user models.Use
 		[]maxapi.Button{{Text: "☰ Главное меню", Payload: "main_menu"}},
 	)
 	return h.max.SendText(ctx, user.PlatformChatID, text, buttons)
+}
+
+func (h *PaymentHandler) unlockPremiumContact(ctx context.Context, user models.User, target models.User) error {
+	if _, err := h.repo.CreateLike(ctx, user.ID, target.ID); err != nil {
+		return err
+	}
+	if err := h.repo.CreateMatch(ctx, user.ID, target.ID); err != nil {
+		return err
+	}
+	return h.sendPremiumContact(ctx, user, target)
 }
 
 func (h *PaymentHandler) hideMatch(w http.ResponseWriter, r *http.Request) {
