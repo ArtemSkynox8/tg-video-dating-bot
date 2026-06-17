@@ -29,7 +29,7 @@ import (
 
 const (
 	matchesPageSize       = 10
-	fakeCircleProfileLink = "https://max.ru/id550411830268_bot"
+	fakeCircleProfileLink = "https://max.ru/id550411830268_bot?start=kruzhki"
 )
 
 type fakeCircleSeed struct {
