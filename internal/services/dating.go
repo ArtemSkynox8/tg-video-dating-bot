@@ -847,7 +847,7 @@ func (s *DatingService) HandleBrowseAction(ctx context.Context, user models.User
 			if !user.IsPremium {
 				return s.SendPremiumOfferV2(ctx, user)
 			}
-			if err := s.repo.CreateLike(ctx, user.ID, ownerID); err != nil {
+			if _, err := s.repo.CreateLike(ctx, user.ID, ownerID); err != nil {
 				return err
 			}
 			if err := s.repo.CreateMatch(ctx, user.ID, ownerID); err != nil {
