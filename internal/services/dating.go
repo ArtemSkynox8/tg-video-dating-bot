@@ -823,8 +823,14 @@ func (s *DatingService) HandleBrowseAction(ctx context.Context, user models.User
 			if !user.IsPremium {
 				return s.SendPremiumOfferV2(ctx, user)
 			}
+			if err := s.repo.CreateLike(ctx, user.ID, ownerID); err != nil {
+				return err
+			}
+			if err := s.repo.CreateMatch(ctx, user.ID, ownerID); err != nil {
+				return err
+			}
 			s.deleteBrowseMessage(ctx, user, chatID, messageID)
-			return s.sendContactAccess(ctx, chatID, "💎 Premium: контакт открыт.", *owner, false)
+			return s.sendContactAccess(ctx, chatID, "💎 Premium: контакт открыт.", *owner, true)
 		}
 		reverse, err := s.repo.HasReverseLike(ctx, user.ID, ownerID)
 		if err != nil {
@@ -853,8 +859,11 @@ func (s *DatingService) HandleBrowseAction(ctx context.Context, user models.User
 			}
 			return s.sendContactAccess(ctx, chatID, "❤️ У вас новый взаимный лайк!", *owner, true)
 		}
+		if err := s.repo.CreateMatch(ctx, user.ID, ownerID); err != nil {
+			return err
+		}
 		s.deleteBrowseMessage(ctx, user, chatID, messageID)
-		return s.sendContactAccess(ctx, chatID, "💎 Premium: контакт открыт без взаимного лайка.", *owner, false)
+		return s.sendContactAccess(ctx, chatID, "💎 Premium: контакт открыт.", *owner, true)
 	}
 	s.deleteBrowseMessage(ctx, user, chatID, messageID)
 	return s.SendNextCandidate(ctx, user)
