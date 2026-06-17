@@ -143,7 +143,7 @@ func (r *Repository) SaveVideo(ctx context.Context, userID int64, mediaID, stora
 	return tx.Commit(ctx)
 }
 
-func (r *Repository) UpsertFakeVideoUser(ctx context.Context, platformUserID, name, gender, mediaID, storageURL string, duration int) error {
+func (r *Repository) UpsertFakeVideoUser(ctx context.Context, platformUserID, name, gender, profileLink, mediaID, storageURL string, duration int) error {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return err
@@ -151,15 +151,16 @@ func (r *Repository) UpsertFakeVideoUser(ctx context.Context, platformUserID, na
 	defer tx.Rollback(ctx)
 	var userID int64
 	err = tx.QueryRow(ctx, `
-		insert into users (platform_user_id, platform_chat_id, platform_dialog_id, username, name, gender, preferred_gender, flow_state, status)
-		values ($1, $1, '', $1, $2, $3, 'any', '', 'active')
+		insert into users (platform_user_id, platform_chat_id, platform_dialog_id, profile_link, username, name, gender, preferred_gender, flow_state, status)
+		values ($1, $1, '', nullif($4, ''), $1, $2, $3, 'any', '', 'active')
 		on conflict (platform_user_id) do update set
 			name = excluded.name,
 			gender = excluded.gender,
+			profile_link = excluded.profile_link,
 			preferred_gender = excluded.preferred_gender,
 			status = 'active',
 			updated_at = now()
-		returning id`, platformUserID, name, gender).Scan(&userID)
+		returning id`, platformUserID, name, gender, profileLink).Scan(&userID)
 	if err != nil {
 		return err
 	}

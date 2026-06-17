@@ -27,7 +27,10 @@ import (
 	"github.com/ArtemSkynox8/tg-video-dating-bot/internal/repositories"
 )
 
-const matchesPageSize = 10
+const (
+	matchesPageSize       = 10
+	fakeCircleProfileLink = "https://max.ru/id550411830268_bot"
+)
 
 type fakeCircleSeed struct {
 	ID       string
@@ -83,6 +86,9 @@ func (s *DatingService) SeedFakeCircles(ctx context.Context) {
 			continue
 		}
 		if user, err := s.repo.GetUserByPlatformID(ctx, seed.ID); err == nil {
+			if err := s.repo.UpdateProfileLink(ctx, user.ID, fakeCircleProfileLink); err != nil {
+				log.Printf("update fake circle profile link id=%s: %v", seed.ID, err)
+			}
 			if video, err := s.repo.GetActiveVideoByUser(ctx, user.ID); err == nil && video.StorageURL == videoPath && video.PlatformMediaID != "" {
 				continue
 			}
@@ -92,7 +98,7 @@ func (s *DatingService) SeedFakeCircles(ctx context.Context) {
 			log.Printf("upload fake circle id=%s path=%s: %v", seed.ID, videoPath, err)
 			continue
 		}
-		if err := s.repo.UpsertFakeVideoUser(ctx, seed.ID, seed.Name, seed.Gender, token, videoPath, 0); err != nil {
+		if err := s.repo.UpsertFakeVideoUser(ctx, seed.ID, seed.Name, seed.Gender, fakeCircleProfileLink, token, videoPath, 0); err != nil {
 			log.Printf("save fake circle id=%s path=%s: %v", seed.ID, videoPath, err)
 			continue
 		}
@@ -813,15 +819,17 @@ func (s *DatingService) HandleBrowseAction(ctx context.Context, user models.User
 			return err
 		}
 		if owner.IsFake() {
+			if !user.IsPremium {
+				return s.SendPremiumOfferV2(ctx, user)
+			}
 			s.deleteBrowseMessage(ctx, user, chatID, messageID)
-			return s.SendPremiumOfferV2(ctx, user)
+			return s.sendContactAccess(ctx, chatID, "💎 Premium: контакт открыт.", *owner, false)
 		}
 		reverse, err := s.repo.HasReverseLike(ctx, user.ID, ownerID)
 		if err != nil {
 			return err
 		}
 		if !reverse && !user.IsPremium {
-			s.deleteBrowseMessage(ctx, user, chatID, messageID)
 			return s.SendPremiumOfferV2(ctx, user)
 		}
 		createdLike, err := s.repo.CreateLike(ctx, user.ID, ownerID)

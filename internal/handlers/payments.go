@@ -197,6 +197,14 @@ func (h *PaymentHandler) applyYooKassaPayment(ctx context.Context, payment yooKa
 	}
 	user, err := h.repo.GetUserByID(ctx, userID)
 	if err == nil {
+		if user.PremiumOfferMessageID != "" {
+			_ = h.max.DeleteMessage(ctx, user.PremiumOfferChatID, user.PremiumOfferMessageID)
+			_ = h.repo.ClearPremiumOfferMessage(ctx, user.ID)
+		}
+		if target, err := h.repo.LatestContactRequest(ctx, user.ID); err == nil {
+			_ = h.sendPremiumContact(ctx, *user, *target)
+			return nil
+		}
 		_ = h.max.SendText(ctx, user.PlatformChatID, "💎 Premium активирован.\n\nПодписка активна до "+until.Format("02.01.2006 15:04")+".", [][]maxapi.Button{
 			{{Text: "▶️ Продолжить просмотр", Payload: "browse"}},
 			{{Text: "☰ Главное меню", Payload: "main_menu"}},
@@ -299,7 +307,7 @@ func (h *PaymentHandler) notifyAdminPaymentEvent(ctx context.Context, user model
 }
 
 func (h *PaymentHandler) sendPremiumContact(ctx context.Context, user models.User, target models.User) error {
-	text := "💎 Premium активирован.\n\nКонтакт открыт: " + displayName(target)
+	text := "Вы открыли контакт: " + displayName(target)
 	buttons := [][]maxapi.Button{}
 	if link := normalizeProfileURL(target.ProfileLink); link != "" {
 		buttons = append(buttons, []maxapi.Button{{Text: "💬 Написать", URL: link}})
