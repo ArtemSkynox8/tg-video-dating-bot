@@ -60,7 +60,9 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "bot_started":
 		if update.User != nil {
 			text := "/start"
-			if payload := firstNonEmpty(update.Payload, update.StartParam, update.StartParamCamel, update.StartPayload); payload != "" {
+			payload := firstNonEmpty(update.Payload, update.StartParam, update.StartParamCamel, update.StartPayload, update.StartPayloadCamel, update.DeepLinkPayload)
+			log.Printf("max update bot_started user=%s payload=%q start_param=%q start_payload=%q", update.User.ID, payload, update.StartParam, update.StartPayload)
+			if payload != "" {
 				text += " " + payload
 			}
 			err = h.service.HandleMessage(ctx, maxapi.MessageUpdate{

@@ -399,6 +399,13 @@ func (r *Repository) UserAdTag(ctx context.Context, userID int64) (string, error
 	return tag, err
 }
 
+func (r *Repository) CreateUserActionLog(ctx context.Context, userID int64, action string) error {
+	_, err := r.db.Exec(ctx, `
+		insert into user_action_logs (user_id, action, payload)
+		values ($1, $2, '{}'::jsonb)`, userID, action)
+	return err
+}
+
 func (r *Repository) CreateOfferReachedLog(ctx context.Context, userID int64, reason string) (string, string, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
@@ -432,6 +439,7 @@ func (r *Repository) AdStats(ctx context.Context, tag string) ([]models.AdStats,
 			select coalesce(nullif(ad_tag, ''), 'без метки') as tag, count(*) as users
 			from users
 			where ($1 = '' or coalesce(nullif(ad_tag, ''), 'без метки') = $1)
+			  and platform_user_id not like 'fake_circle_%'
 			group by 1
 		),
 		offer_stats as (
@@ -440,6 +448,7 @@ func (r *Repository) AdStats(ctx context.Context, tag string) ([]models.AdStats,
 			join users u on u.id = l.user_id
 			where l.action = 'offer_reached'
 			  and ($1 = '' or coalesce(nullif(u.ad_tag, ''), 'без метки') = $1)
+			  and u.platform_user_id not like 'fake_circle_%'
 			group by 1
 		),
 		buyer_stats as (
@@ -450,12 +459,33 @@ func (r *Repository) AdStats(ctx context.Context, tag string) ([]models.AdStats,
 			join users u on u.id = p.user_id
 			where p.status = 'succeeded'
 			  and ($1 = '' or coalesce(nullif(u.ad_tag, ''), 'без метки') = $1)
+			  and u.platform_user_id not like 'fake_circle_%'
+			group by 1
+		),
+		video_stats as (
+			select coalesce(nullif(u.ad_tag, ''), 'без метки') as tag, count(distinct l.user_id) as videos
+			from user_action_logs l
+			join users u on u.id = l.user_id
+			where l.action = 'recorded_video'
+			  and ($1 = '' or coalesce(nullif(u.ad_tag, ''), 'без метки') = $1)
+			  and u.platform_user_id not like 'fake_circle_%'
+			group by 1
+		),
+		contact_stats as (
+			select coalesce(nullif(u.ad_tag, ''), 'без метки') as tag, count(distinct l.user_id) as contact
+			from user_action_logs l
+			join users u on u.id = l.user_id
+			where l.action = 'shared_contact'
+			  and ($1 = '' or coalesce(nullif(u.ad_tag, ''), 'без метки') = $1)
+			  and u.platform_user_id not like 'fake_circle_%'
 			group by 1
 		)
-		select us.tag, us.users, coalesce(os.offer, 0), coalesce(bs.buyers, 0), coalesce(bs.sum, 0)
+		select us.tag, us.users, coalesce(os.offer, 0), coalesce(vs.videos, 0), coalesce(cs.contact, 0), coalesce(bs.buyers, 0), coalesce(bs.sum, 0)
 		from user_stats us
 		left join offer_stats os on os.tag = us.tag
 		left join buyer_stats bs on bs.tag = us.tag
+		left join video_stats vs on vs.tag = us.tag
+		left join contact_stats cs on cs.tag = us.tag
 		order by us.users desc, us.tag asc`, tag)
 	if err != nil {
 		return nil, err
@@ -464,7 +494,7 @@ func (r *Repository) AdStats(ctx context.Context, tag string) ([]models.AdStats,
 	stats := []models.AdStats{}
 	for rows.Next() {
 		var item models.AdStats
-		if err := rows.Scan(&item.Tag, &item.Users, &item.Offer, &item.Buyers, &item.Sum); err != nil {
+		if err := rows.Scan(&item.Tag, &item.Users, &item.Offer, &item.Videos, &item.Contact, &item.Buyers, &item.Sum); err != nil {
 			return nil, err
 		}
 		stats = append(stats, item)

@@ -13,7 +13,9 @@ type Update struct {
 	Payload    string         `json:"payload,omitempty"`
 	StartParam string         `json:"start_param,omitempty"`
 	StartParamCamel string    `json:"startParam,omitempty"`
-	StartPayload string       `json:"start_payload,omitempty"`
+	StartPayload      string `json:"start_payload,omitempty"`
+	StartPayloadCamel string `json:"startPayload,omitempty"`
+	DeepLinkPayload   string `json:"deep_link_payload,omitempty"`
 	User       *PlatformUser  `json:"user,omitempty"`
 	Message    *Message       `json:"message,omitempty"`
 	Callback   *CallbackEvent `json:"callback,omitempty"`

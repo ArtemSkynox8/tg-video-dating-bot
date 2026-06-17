@@ -117,11 +117,19 @@ func (s *DatingService) HandleMessage(ctx context.Context, msg maxapi.MessageUpd
 	if err != nil {
 		return err
 	}
-	if user.CreatedAt.Equal(user.UpdatedAt) {
+	isNewUser := user.CreatedAt.Equal(user.UpdatedAt)
+	text := strings.TrimSpace(msg.Text)
+	if payload := startPayloadFromText(text); payload != "" {
+		if tag := adTagFromStartPayload(payload); tag != "" {
+			if err := s.repo.SetAdTagIfEmpty(ctx, user.ID, tag); err != nil {
+				return err
+			}
+		}
+	}
+	if isNewUser {
 		s.NotifyAdminEvent(ctx, *user, "Зашел новый пользователь")
 	}
 
-	text := strings.TrimSpace(msg.Text)
 	if msg.Forward != nil {
 		s.saveForward(msg.From.ID, *msg.Forward)
 		if text == "" {
@@ -614,6 +622,9 @@ func (s *DatingService) SaveRecordedVideo(ctx context.Context, user models.User,
 	if err := s.repo.ClearFlowState(ctx, user.ID); err != nil {
 		return err
 	}
+	if err := s.repo.CreateUserActionLog(ctx, user.ID, "recorded_video"); err != nil {
+		log.Printf("recorded video log user=%d: %v", user.ID, err)
+	}
 	s.NotifyAdminEvent(ctx, user, "Оставил кружок")
 	if strings.TrimSpace(user.ProfileLink) == "" && strings.TrimSpace(user.ContactPhone) == "" {
 		return s.max.SendText(ctx, user.PlatformChatID, "✅ Кружок успешно сохранен.\n\nЧтобы другие пользователи могли написать вам после взаимного лайка, добавьте свой контакт MAX.", [][]maxapi.Button{
@@ -661,6 +672,10 @@ func (s *DatingService) SaveProfileLink(ctx context.Context, user models.User, l
 	if err := s.repo.ClearFlowState(ctx, user.ID); err != nil {
 		return err
 	}
+	if err := s.repo.CreateUserActionLog(ctx, user.ID, "shared_contact"); err != nil {
+		log.Printf("shared contact log user=%d: %v", user.ID, err)
+	}
+	s.NotifyAdminEvent(ctx, user, "Поделился контактом")
 	return s.max.SendText(ctx, user.PlatformChatID, "Ссылка MAX сохранена. Теперь при взаимном лайке или Premium-контакте кнопка «Написать» будет открывать личные сообщения.", [][]maxapi.Button{
 		{{Text: "▶️ Начать просмотр", Payload: "browse"}},
 		{{Text: "☰ Главное меню", Payload: "main_menu"}},
@@ -692,6 +707,10 @@ func (s *DatingService) SaveContactPhone(ctx context.Context, user models.User, 
 	if err := s.repo.ClearFlowState(ctx, user.ID); err != nil {
 		return err
 	}
+	if err := s.repo.CreateUserActionLog(ctx, user.ID, "shared_contact"); err != nil {
+		log.Printf("shared contact log user=%d: %v", user.ID, err)
+	}
+	s.NotifyAdminEvent(ctx, user, "Поделился контактом")
 	return s.max.SendText(ctx, user.PlatformChatID, "Контакт MAX сохранен. Если хотите, можете дополнительно отправить ссылку https://max.ru/u/... - тогда кнопка «Написать» будет открывать личные сообщения напрямую.", [][]maxapi.Button{
 		{{Text: "▶️ Начать просмотр", Payload: "browse"}},
 		{{Text: "☰ Главное меню", Payload: "main_menu"}},
@@ -1184,11 +1203,11 @@ func (s *DatingService) botStartURL(payload string) string {
 		separator = "&"
 	}
 	escaped := url.QueryEscape(payload)
-	return baseURL + separator + "start=" + escaped + "&start_param=" + escaped
+	return baseURL + separator + "start=" + escaped + "&start_param=" + escaped + "&payload=" + escaped + "&startPayload=" + escaped
 }
 
 func (s *DatingService) HandleStartPayload(ctx context.Context, user models.User, payload string) error {
-	payload = strings.TrimSpace(strings.TrimPrefix(payload, "start="))
+	payload = normalizeStartPayload(payload)
 	if strings.HasPrefix(payload, "ref_") {
 		referrerID := parseID(strings.TrimPrefix(payload, "ref_"))
 		if err := s.repo.SetReferrer(ctx, user.ID, referrerID); err != nil {
@@ -1196,8 +1215,7 @@ func (s *DatingService) HandleStartPayload(ctx context.Context, user models.User
 		}
 		return s.Start(ctx, user)
 	}
-	if strings.HasPrefix(payload, "ad_") {
-		tag := strings.TrimSpace(strings.TrimPrefix(payload, "ad_"))
+	if tag := adTagFromStartPayload(payload); tag != "" {
 		if err := s.repo.SetAdTagIfEmpty(ctx, user.ID, tag); err != nil {
 			return err
 		}
@@ -1753,6 +1771,57 @@ func parseID(value string) int64 {
 	return out
 }
 
+func startPayloadFromText(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "/start" {
+		return ""
+	}
+	if strings.HasPrefix(text, "/start ") {
+		return normalizeStartPayload(strings.TrimSpace(strings.TrimPrefix(text, "/start ")))
+	}
+	return ""
+}
+
+func normalizeStartPayload(payload string) string {
+	payload = strings.TrimSpace(payload)
+	payload = strings.TrimPrefix(payload, "start=")
+	payload = strings.TrimPrefix(payload, "start_param=")
+	payload = strings.TrimPrefix(payload, "startParam=")
+	payload = strings.TrimPrefix(payload, "start_payload=")
+	payload = strings.TrimPrefix(payload, "startPayload=")
+	payload = strings.TrimPrefix(payload, "payload=")
+	if decoded, err := url.QueryUnescape(payload); err == nil {
+		payload = strings.TrimSpace(decoded)
+	}
+	return payload
+}
+
+func adTagFromStartPayload(payload string) string {
+	payload = normalizeStartPayload(payload)
+	for _, prefix := range []string{"ad_", "ad:", "ad-", "tag_", "tag:", "tag-"} {
+		if strings.HasPrefix(payload, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(payload, prefix))
+		}
+	}
+	if payload != "" && !strings.HasPrefix(payload, "ref_") && !strings.HasPrefix(payload, "match_actions") && validAdTag(payload) {
+		return payload
+	}
+	return ""
+}
+
+func validAdTag(tag string) bool {
+	if tag == "" || len(tag) > 64 {
+		return false
+	}
+	for _, r := range tag {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 func formatAdStats(title string, stats []models.AdStats) string {
 	lines := []string{title}
 	if len(stats) == 0 {
@@ -1769,8 +1838,8 @@ func formatAdStats(title string, stats []models.AdStats) string {
 			ltv = item.Sum / float64(item.Users)
 		}
 		lines = append(lines, fmt.Sprintf(
-			"• %s | users %d | offer %d (%.1f%%) | buyers %d | conv %.1f%% | sum %.0f | LTV %.1f",
-			item.Tag, item.Users, item.Offer, offerPercent, item.Buyers, convPercent, item.Sum, ltv,
+			"• %s | users %d | video %d | contact %d | offer %d (%.1f%%) | buyers %d | conv %.1f%% | sum %.0f | LTV %.1f",
+			item.Tag, item.Users, item.Videos, item.Contact, item.Offer, offerPercent, item.Buyers, convPercent, item.Sum, ltv,
 		))
 	}
 	return strings.Join(lines, "\n")

@@ -67,11 +67,13 @@ type PremiumSubscription struct {
 }
 
 type AdStats struct {
-	Tag    string
-	Users  int64
-	Offer  int64
-	Buyers int64
-	Sum    float64
+	Tag     string
+	Users   int64
+	Offer   int64
+	Videos  int64
+	Contact int64
+	Buyers  int64
+	Sum     float64
 }
 
 const (
