@@ -1203,7 +1203,7 @@ func (s *DatingService) botStartURL(payload string) string {
 		separator = "&"
 	}
 	escaped := url.QueryEscape(payload)
-	return baseURL + separator + "start=" + escaped + "&start_param=" + escaped + "&payload=" + escaped + "&startPayload=" + escaped
+	return baseURL + separator + "start=" + escaped
 }
 
 func (s *DatingService) HandleStartPayload(ctx context.Context, user models.User, payload string) error {
