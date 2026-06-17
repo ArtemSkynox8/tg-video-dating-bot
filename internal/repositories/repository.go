@@ -330,7 +330,8 @@ func (r *Repository) CreatePremiumOpenedMatches(ctx context.Context, userID int6
 		join users u on u.id = v.viewed_user_id
 		where v.viewer_id = $1
 		  and v.viewed_user_id <> v.viewer_id
-		  and (v.action = 'contact' or (v.action = 'like' and u.platform_user_id like 'fake_circle_%'))
+		  and v.action = 'like'
+		  and u.platform_user_id like 'fake_circle_%'
 		on conflict (user1_id, user2_id) do nothing`, userID)
 	return err
 }
@@ -380,7 +381,7 @@ func (r *Repository) HideMatchForUser(ctx context.Context, userID, otherUserID i
 }
 
 func (r *Repository) ResetBrowseViews(ctx context.Context, userID int64) error {
-	_, err := r.db.Exec(ctx, `delete from views where viewer_id = $1 and action in ('next', 'like', 'contact')`, userID)
+	_, err := r.db.Exec(ctx, `delete from views where viewer_id = $1 and action in ('next', 'like')`, userID)
 	return err
 }
 
@@ -667,7 +668,7 @@ func (r *Repository) LatestContactRequest(ctx context.Context, userID int64) (*m
 		from views v
 		join users u on u.id = v.viewed_user_id
 		where v.viewer_id = $1
-		  and (v.action = 'contact' or (v.action = 'like' and u.platform_user_id like 'fake_circle_%'))
+		  and v.action = 'like'
 		order by v.created_at desc
 		limit 1`, userID)
 	return scanUser(row)

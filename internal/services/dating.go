@@ -828,11 +828,7 @@ func (s *DatingService) HandleBrowseAction(ctx context.Context, user models.User
 	if videoID == 0 || ownerID == 0 {
 		return nil
 	}
-	viewAction := action
-	if action == models.ActionLike {
-		viewAction = models.ActionContact
-	}
-	if err := s.repo.CreateView(ctx, user.ID, videoID, ownerID, viewAction); err != nil {
+	if err := s.repo.CreateView(ctx, user.ID, videoID, ownerID, action); err != nil {
 		return err
 	}
 	if err := s.NotifyReferralCompleted(ctx, user.ID); err != nil {
