@@ -19,6 +19,8 @@ import (
 	"github.com/ArtemSkynox8/tg-video-dating-bot/internal/services"
 )
 
+const botTemporarilyDisabled = true
+
 func main() {
 	cfg := config.Load()
 
@@ -47,6 +49,16 @@ func main() {
 	mux.Handle("GET /pay/success", miniapp)
 	mux.Handle("POST /pay/yookassa/webhook", miniapp)
 
+	if botTemporarilyDisabled {
+		disabled := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("bot disabled"))
+		})
+		webhook.Set(disabled)
+		miniapp.Set(disabled)
+		log.Printf("bot temporarily disabled")
+	}
+
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
 		Handler:           mux,
@@ -60,7 +72,9 @@ func main() {
 		}
 	}()
 
-	go initializeBot(ctx, cfg, webhook, miniapp)
+	if !botTemporarilyDisabled {
+		go initializeBot(ctx, cfg, webhook, miniapp)
+	}
 
 	<-ctx.Done()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
