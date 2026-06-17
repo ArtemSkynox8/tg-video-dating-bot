@@ -83,9 +83,10 @@ const (
 	GenderFemale = "female"
 	GenderAny    = "any"
 
-	ActionLike   = "like"
-	ActionNext   = "next"
-	ActionReport = "report"
+	ActionLike    = "like"
+	ActionContact = "contact"
+	ActionNext    = "next"
+	ActionReport  = "report"
 )
 
 const (

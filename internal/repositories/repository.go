@@ -281,7 +281,9 @@ func (r *Repository) CreateView(ctx context.Context, viewerID, videoID, viewedUs
 	if _, err := tx.Exec(ctx, `
 		insert into views (viewer_id, video_id, viewed_user_id, action)
 		values ($1, $2, $3, $4)
-		on conflict (viewer_id, video_id) do nothing`, viewerID, videoID, viewedUserID, action); err != nil {
+		on conflict (viewer_id, video_id) do update set
+			action = case when excluded.action = 'contact' then excluded.action else views.action end,
+			created_at = case when excluded.action = 'contact' then now() else views.created_at end`, viewerID, videoID, viewedUserID, action); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
@@ -317,6 +319,19 @@ func (r *Repository) CreateMatch(ctx context.Context, user1ID, user2ID int64) er
 		insert into matches (user1_id, user2_id)
 		values ($1, $2)
 		on conflict (user1_id, user2_id) do nothing`, user1ID, user2ID)
+	return err
+}
+
+func (r *Repository) CreatePremiumOpenedMatches(ctx context.Context, userID int64) error {
+	_, err := r.db.Exec(ctx, `
+		insert into matches (user1_id, user2_id)
+		select least(v.viewer_id, v.viewed_user_id), greatest(v.viewer_id, v.viewed_user_id)
+		from views v
+		join users u on u.id = v.viewed_user_id
+		where v.viewer_id = $1
+		  and v.viewed_user_id <> v.viewer_id
+		  and (v.action = 'contact' or (v.action = 'like' and u.platform_user_id like 'fake_circle_%'))
+		on conflict (user1_id, user2_id) do nothing`, userID)
 	return err
 }
 
@@ -365,7 +380,7 @@ func (r *Repository) HideMatchForUser(ctx context.Context, userID, otherUserID i
 }
 
 func (r *Repository) ResetBrowseViews(ctx context.Context, userID int64) error {
-	_, err := r.db.Exec(ctx, `delete from views where viewer_id = $1 and action in ('next', 'like')`, userID)
+	_, err := r.db.Exec(ctx, `delete from views where viewer_id = $1 and action in ('next', 'like', 'contact')`, userID)
 	return err
 }
 
@@ -651,7 +666,8 @@ func (r *Repository) LatestContactRequest(ctx context.Context, userID int64) (*m
 		       u.referrer_user_id, u.referral_contact_credits, u.referral_rewarded_at, u.status, u.restricted_until, coalesce(u.premium_offer_chat_id, ''), coalesce(u.premium_offer_message_id, ''), u.created_at, u.updated_at
 		from views v
 		join users u on u.id = v.viewed_user_id
-		where v.viewer_id = $1 and v.action = 'like'
+		where v.viewer_id = $1
+		  and (v.action = 'contact' or (v.action = 'like' and u.platform_user_id like 'fake_circle_%'))
 		order by v.created_at desc
 		limit 1`, userID)
 	return scanUser(row)
@@ -821,6 +837,22 @@ func (r *Repository) ListDuePremiumSubscriptions(ctx context.Context, limit int)
 		out = append(out, sub)
 	}
 	return out, rows.Err()
+}
+
+func (r *Repository) ActivePremiumSubscription(ctx context.Context, userID int64) (*models.PremiumSubscription, error) {
+	var sub models.PremiumSubscription
+	err := r.db.QueryRow(ctx, `
+		select ps.plan, ps.amount::text, ps.period_days, coalesce(ps.payment_method_id, ''), ps.current_period_until, ps.next_charge_at
+		from premium_subscriptions ps
+		where ps.user_id = $1 and ps.active = true
+		limit 1`, userID).Scan(&sub.Plan, &sub.Amount, &sub.PeriodDays, &sub.PaymentMethodID, &sub.CurrentPeriodUntil, &sub.NextChargeAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return &sub, nil
 }
 
 func (r *Repository) PostponePremiumSubscription(ctx context.Context, userID int64, nextChargeAt time.Time) error {

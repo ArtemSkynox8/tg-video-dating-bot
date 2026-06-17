@@ -421,12 +421,32 @@ func (s *DatingService) SendPremiumOfferV2(ctx context.Context, user models.User
 }
 
 func (s *DatingService) SendSubscriptionStatusV2(ctx context.Context, user models.User) error {
-	htmlText, plainText := s.subscriptionOfferText(user)
 	if user.IsPremium {
+		htmlText, plainText := s.activeSubscriptionText(ctx, user)
 		return s.max.SendFormattedText(ctx, user.PlatformChatID, htmlText, plainText, activeSubscriptionButtons())
 	}
+	htmlText, plainText := s.subscriptionOfferText(user)
 	s.NotifyOfferReached(ctx, user, "premium_open")
 	return s.max.SendFormattedText(ctx, user.PlatformChatID, htmlText, plainText, premiumOfferButtons(s.premiumPaymentURL(user, "3d"), s.premiumPaymentURL(user, "week")))
+}
+
+func (s *DatingService) activeSubscriptionText(ctx context.Context, user models.User) (string, string) {
+	title := "Подписка Premium активна"
+	plan := s.premiumPriceText()
+	until := ""
+	if sub, err := s.repo.ActivePremiumSubscription(ctx, user.ID); err == nil {
+		plan = formatSubscriptionPlan(sub.Amount, sub.PeriodDays)
+		until = "\nАктивна до: " + sub.CurrentPeriodUntil.Format("02.01.2006 15:04")
+	}
+	htmlText := `<b>💎 ` + html.EscapeString(title) + `</b>
+
+Тариф: ` + html.EscapeString(plan) + html.EscapeString(until) + `
+
+Подписка дает доступ к контактам без взаимного лайка.`
+	plainText := "💎 " + title + "\n\n" +
+		"Тариф: " + plan + until + "\n\n" +
+		"Подписка дает доступ к контактам без взаимного лайка."
+	return htmlText, plainText
 }
 
 func (s *DatingService) subscriptionOfferText(user models.User) (string, string) {
@@ -808,7 +828,11 @@ func (s *DatingService) HandleBrowseAction(ctx context.Context, user models.User
 	if videoID == 0 || ownerID == 0 {
 		return nil
 	}
-	if err := s.repo.CreateView(ctx, user.ID, videoID, ownerID, action); err != nil {
+	viewAction := action
+	if action == models.ActionLike {
+		viewAction = models.ActionContact
+	}
+	if err := s.repo.CreateView(ctx, user.ID, videoID, ownerID, viewAction); err != nil {
 		return err
 	}
 	if err := s.NotifyReferralCompleted(ctx, user.ID); err != nil {
@@ -1077,6 +1101,11 @@ func (s *DatingService) SendMatches(ctx context.Context, user models.User) error
 }
 
 func (s *DatingService) SendMatchesPage(ctx context.Context, user models.User, page int) error {
+	if user.IsPremium {
+		if err := s.repo.CreatePremiumOpenedMatches(ctx, user.ID); err != nil {
+			return err
+		}
+	}
 	users, err := s.repo.ListVisibleMatches(ctx, user.ID)
 	if err != nil {
 		return err
@@ -2007,6 +2036,21 @@ func (s *DatingService) premiumPriceText() string {
 		return price
 	}
 	return price + " ₽"
+}
+
+func formatSubscriptionPlan(amount string, periodDays int) string {
+	price := strings.TrimSuffix(strings.TrimSpace(amount), ".00")
+	if price == "" {
+		price = "199"
+	}
+	unit := "дней"
+	if periodDays == 1 {
+		unit = "день"
+	}
+	if periodDays >= 2 && periodDays <= 4 {
+		unit = "дня"
+	}
+	return fmt.Sprintf("%s ₽ / %d %s", price, periodDays, unit)
 }
 
 func mainMenuButtons() [][]maxapi.Button {
