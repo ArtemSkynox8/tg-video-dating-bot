@@ -126,7 +126,7 @@ func initializeBot(ctx context.Context, cfg config.Config, webhook *dynamicWebho
 
 	repo := repositories.New(pool)
 	maxClient := maxapi.NewClient(cfg.MaxAPIBaseURL, cfg.MaxBotToken)
-	aiClient := ai.NewClient(cfg.KIEBaseURL, cfg.KIEAPIKey, cfg.KIEModel)
+	aiClient := ai.NewClient(cfg.ImageServiceURL, cfg.ImageServiceSecret)
 	botService := services.NewDatingService(repo, maxClient, aiClient, cfg.PublicBaseURL, cfg.SupportURL, cfg.FakeCirclesDir)
 	go botService.SeedFakeCircles(ctx)
 	webhook.Set(handlers.NewWebhookHandler(cfg, botService))

@@ -27,9 +27,8 @@ type Config struct {
 	FakeCirclesDir            string
 	FortuneWheelVideoID       string
 	FortuneWheelVideoPath     string
-	KIEBaseURL                string
-	KIEAPIKey                 string
-	KIEModel                  string
+	ImageServiceURL           string
+	ImageServiceSecret        string
 	SupportURL                string
 }
 
@@ -56,9 +55,8 @@ func Load() Config {
 		FakeCirclesDir:            getEnv("FAKE_CIRCLES_DIR", "assets/fake-circles"),
 		FortuneWheelVideoID:       os.Getenv("FORTUNE_WHEEL_VIDEO_ID"),
 		FortuneWheelVideoPath:     getEnv("FORTUNE_WHEEL_VIDEO_PATH", "assets/fortune-wheel/wheel.mp4"),
-		KIEBaseURL:                getEnv("KIE_BASE_URL", "https://api.kie.ai/gemini-3-5-flash-openai/v1"),
-		KIEAPIKey:                 os.Getenv("KIE_API_KEY"),
-		KIEModel:                  getEnv("KIE_MODEL", "gemini-3.5-flash"),
+		ImageServiceURL:           getEnv("IMAGE_SERVICE_URL", "https://artemskynox8-ai-girl-max-bot-2183.twc1.net"),
+		ImageServiceSecret:        os.Getenv("IMAGE_SERVICE_SECRET"),
 		SupportURL:                getEnv("SUPPORT_URL", "https://max.ru/id5156654"),
 	}
 }
