@@ -24,8 +24,12 @@ type Client struct {
 }
 
 func NewClient(baseURL, apiKey, model string) *Client {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if baseURL == "https://api.kie.ai/v1" || baseURL == "https://api.kie.ai/api/v1" {
+		baseURL = "https://api.kie.ai/gemini-3-5-flash-openai/v1"
+	}
 	return &Client{
-		baseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"),
+		baseURL: baseURL,
 		apiKey: strings.TrimSpace(apiKey),
 		model: strings.TrimSpace(model),
 		http: &http.Client{Timeout: 60 * time.Second},
@@ -36,8 +40,20 @@ func (c *Client) Chat(ctx context.Context, messages []Message) (string, error) {
 	if c.apiKey == "" {
 		return "", fmt.Errorf("KIE_API_KEY is not configured")
 	}
+	wireMessages := make([]map[string]any, 0, len(messages))
+	for _, message := range messages {
+		role := message.Role
+		if role == "assistant" {
+			role = "model"
+		}
+		wireMessages = append(wireMessages, map[string]any{
+			"role": role,
+			"content": []map[string]string{{"type": "text", "text": message.Content}},
+		})
+	}
 	payload, err := json.Marshal(map[string]any{
-		"model": c.model, "messages": messages, "temperature": 0.9, "max_tokens": 500,
+		"messages": wireMessages,
+		"stream": false,
 	})
 	if err != nil { return "", err }
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(payload))
@@ -51,10 +67,24 @@ func (c *Client) Chat(ctx context.Context, messages []Message) (string, error) {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return "", fmt.Errorf("kie api status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
-	var out struct { Choices []struct { Message Message `json:"message"` } `json:"choices"` }
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil { return "", err }
-	if len(out.Choices) == 0 || strings.TrimSpace(out.Choices[0].Message.Content) == "" {
-		return "", fmt.Errorf("kie api returned an empty response")
+	var out struct {
+		Choices []struct { Message Message `json:"message"` } `json:"choices"`
+		Candidates []struct {
+			Content struct {
+				Parts []struct { Text string `json:"text"` } `json:"parts"`
+			} `json:"content"`
+		} `json:"candidates"`
 	}
-	return strings.TrimSpace(out.Choices[0].Message.Content), nil
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil { return "", err }
+	if len(out.Choices) > 0 && strings.TrimSpace(out.Choices[0].Message.Content) != "" {
+		return strings.TrimSpace(out.Choices[0].Message.Content), nil
+	}
+	if len(out.Candidates) > 0 {
+		parts := make([]string, 0, len(out.Candidates[0].Content.Parts))
+		for _, part := range out.Candidates[0].Content.Parts {
+			if text := strings.TrimSpace(part.Text); text != "" { parts = append(parts, text) }
+		}
+		if result := strings.TrimSpace(strings.Join(parts, "\n")); result != "" { return result, nil }
+	}
+	return "", fmt.Errorf("kie api returned an empty response")
 }

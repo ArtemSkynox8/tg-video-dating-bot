@@ -56,9 +56,9 @@ func Load() Config {
 		FakeCirclesDir:            getEnv("FAKE_CIRCLES_DIR", "assets/fake-circles"),
 		FortuneWheelVideoID:       os.Getenv("FORTUNE_WHEEL_VIDEO_ID"),
 		FortuneWheelVideoPath:     getEnv("FORTUNE_WHEEL_VIDEO_PATH", "assets/fortune-wheel/wheel.mp4"),
-		KIEBaseURL:                getEnv("KIE_BASE_URL", "https://api.kie.ai/v1"),
+		KIEBaseURL:                getEnv("KIE_BASE_URL", "https://api.kie.ai/gemini-3-5-flash-openai/v1"),
 		KIEAPIKey:                 os.Getenv("KIE_API_KEY"),
-		KIEModel:                  getEnv("KIE_MODEL", "grok-3-mini"),
+		KIEModel:                  getEnv("KIE_MODEL", "gemini-3.5-flash"),
 		SupportURL:                getEnv("SUPPORT_URL", "https://max.ru/id5156654"),
 	}
 }
