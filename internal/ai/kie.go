@@ -67,24 +67,41 @@ func (c *Client) Chat(ctx context.Context, messages []Message) (string, error) {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return "", fmt.Errorf("kie api status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
-	var out struct {
-		Choices []struct { Message Message `json:"message"` } `json:"choices"`
-		Candidates []struct {
-			Content struct {
-				Parts []struct { Text string `json:"text"` } `json:"parts"`
-			} `json:"content"`
-		} `json:"candidates"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil { return "", err }
-	if len(out.Choices) > 0 && strings.TrimSpace(out.Choices[0].Message.Content) != "" {
-		return strings.TrimSpace(out.Choices[0].Message.Content), nil
-	}
-	if len(out.Candidates) > 0 {
-		parts := make([]string, 0, len(out.Candidates[0].Content.Parts))
-		for _, part := range out.Candidates[0].Content.Parts {
-			if text := strings.TrimSpace(part.Text); text != "" { parts = append(parts, text) }
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil { return "", err }
+	var out any
+	if err := json.Unmarshal(body, &out); err != nil { return "", err }
+	if result := extractAIText(out); result != "" { return result, nil }
+	return "", fmt.Errorf("kie api returned no text; response keys=%s", responseKeys(out))
+}
+
+func extractAIText(value any) string {
+	switch item := value.(type) {
+	case []any:
+		parts := make([]string, 0, len(item))
+		for _, child := range item {
+			if text := extractAIText(child); text != "" { parts = append(parts, text) }
 		}
-		if result := strings.TrimSpace(strings.Join(parts, "\n")); result != "" { return result, nil }
+		return strings.TrimSpace(strings.Join(parts, "\n"))
+	case map[string]any:
+		for _, key := range []string{"text", "output_text"} {
+			if text, ok := item[key].(string); ok && strings.TrimSpace(text) != "" {
+				return strings.TrimSpace(text)
+			}
+		}
+		for _, key := range []string{"choices", "candidates", "message", "content", "parts", "output", "outputs", "response", "data"} {
+			if child, ok := item[key]; ok {
+				if text := extractAIText(child); text != "" { return text }
+			}
+		}
 	}
-	return "", fmt.Errorf("kie api returned an empty response")
+	return ""
+}
+
+func responseKeys(value any) string {
+	item, ok := value.(map[string]any)
+	if !ok { return fmt.Sprintf("%T", value) }
+	keys := make([]string, 0, len(item))
+	for key := range item { keys = append(keys, key) }
+	return strings.Join(keys, ",")
 }
