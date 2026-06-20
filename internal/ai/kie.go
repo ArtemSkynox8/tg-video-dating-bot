@@ -77,6 +77,16 @@ func (c *Client) Chat(ctx context.Context, messages []Message) (string, error) {
 
 func extractAIText(value any) string {
 	switch item := value.(type) {
+	case string:
+		text := strings.TrimSpace(item)
+		if text == "" { return "" }
+		if json.Valid([]byte(text)) {
+			var nested any
+			if json.Unmarshal([]byte(text), &nested) == nil {
+				if result := extractAIText(nested); result != "" { return result }
+			}
+		}
+		return text
 	case []any:
 		parts := make([]string, 0, len(item))
 		for _, child := range item {
