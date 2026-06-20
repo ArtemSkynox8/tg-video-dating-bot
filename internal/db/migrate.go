@@ -177,4 +177,51 @@ create index if not exists users_referrer_idx on users(referrer_user_id);
 create index if not exists users_ad_tag_idx on users(ad_tag);
 create index if not exists referral_contact_opens_user_idx on referral_contact_opens(user_id, created_at desc);
 create index if not exists user_action_logs_action_idx on user_action_logs(action, created_at desc);
+
+create table if not exists chat_profiles (
+    user_id bigint primary key references users(id) on delete cascade,
+    character_id text not null,
+    free_messages_used integer not null default 0,
+    spicy_teaser_shown boolean not null default false,
+    updated_at timestamptz not null default now()
+);
+
+create table if not exists chat_messages (
+    id bigserial primary key,
+    user_id bigint not null references users(id) on delete cascade,
+    role text not null check (role in ('user', 'assistant')),
+    content text not null,
+    created_at timestamptz not null default now()
+);
+create index if not exists chat_messages_user_idx on chat_messages(user_id, id desc);
+
+create table if not exists character_media (
+    character_id text primary key,
+    media_token text not null,
+    updated_at timestamptz not null default now()
+);
+
+create table if not exists app_data_migrations (
+    name text primary key,
+    applied_at timestamptz not null default now()
+);
+
+do $$
+begin
+    if not exists (select 1 from app_data_migrations where name='ai_characters_v1_reset') then
+        delete from users;
+        delete from character_media;
+        insert into app_data_migrations(name) values('ai_characters_v1_reset');
+    end if;
+end $$;
+
+-- Old user-recorded dating data is intentionally removed by the new AI-character flow.
+drop table if exists user_reports cascade;
+drop table if exists video_reports cascade;
+drop table if exists priority_queue cascade;
+drop table if exists matches cascade;
+drop table if exists likes cascade;
+drop table if exists views cascade;
+drop table if exists videos cascade;
+drop table if exists referral_contact_opens cascade;
 `

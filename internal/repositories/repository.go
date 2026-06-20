@@ -5,10 +5,17 @@ import (
 	"errors"
 	"time"
 
+	"github.com/ArtemSkynox8/tg-video-dating-bot/internal/ai"
 	"github.com/ArtemSkynox8/tg-video-dating-bot/internal/models"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+type ChatProfile struct {
+	CharacterID      string
+	FreeMessagesUsed int
+	SpicyTeaserShown bool
+}
 
 var ErrNotFound = errors.New("not found")
 
@@ -18,6 +25,62 @@ type Repository struct {
 
 func New(db *pgxpool.Pool) *Repository {
 	return &Repository{db: db}
+}
+
+func (r *Repository) GetChatProfile(ctx context.Context, userID int64) (ChatProfile, error) {
+	var p ChatProfile
+	err := r.db.QueryRow(ctx, `select character_id, free_messages_used, spicy_teaser_shown from chat_profiles where user_id=$1`, userID).
+		Scan(&p.CharacterID, &p.FreeMessagesUsed, &p.SpicyTeaserShown)
+	if errors.Is(err, pgx.ErrNoRows) { return p, ErrNotFound }
+	return p, err
+}
+
+func (r *Repository) SetCharacter(ctx context.Context, userID int64, characterID string) error {
+	_, err := r.db.Exec(ctx, `insert into chat_profiles(user_id, character_id) values($1,$2)
+		on conflict(user_id) do update set character_id=excluded.character_id, free_messages_used=0,
+		spicy_teaser_shown=false, updated_at=now()`, userID, characterID)
+	if err != nil { return err }
+	_, err = r.db.Exec(ctx, `delete from chat_messages where user_id=$1`, userID)
+	return err
+}
+
+func (r *Repository) AddChatMessage(ctx context.Context, userID int64, role, content string) error {
+	_, err := r.db.Exec(ctx, `insert into chat_messages(user_id, role, content) values($1,$2,$3)`, userID, role, content)
+	return err
+}
+
+func (r *Repository) RecentChatMessages(ctx context.Context, userID int64, limit int) ([]ai.Message, error) {
+	rows, err := r.db.Query(ctx, `select role, content from (
+		select id, role, content from chat_messages where user_id=$1 order by id desc limit $2
+	) q order by id`, userID, limit)
+	if err != nil { return nil, err }
+	defer rows.Close()
+	out := make([]ai.Message, 0, limit)
+	for rows.Next() { var m ai.Message; if err := rows.Scan(&m.Role, &m.Content); err != nil { return nil, err }; out = append(out, m) }
+	return out, rows.Err()
+}
+
+func (r *Repository) IncrementFreeMessages(ctx context.Context, userID int64) error {
+	_, err := r.db.Exec(ctx, `update chat_profiles set free_messages_used=free_messages_used+1, updated_at=now() where user_id=$1`, userID)
+	return err
+}
+
+func (r *Repository) MarkSpicyTeaserShown(ctx context.Context, userID int64) error {
+	_, err := r.db.Exec(ctx, `update chat_profiles set spicy_teaser_shown=true, updated_at=now() where user_id=$1`, userID)
+	return err
+}
+
+func (r *Repository) CharacterMediaToken(ctx context.Context, characterID string) (string, error) {
+	var token string
+	err := r.db.QueryRow(ctx, `select media_token from character_media where character_id=$1`, characterID).Scan(&token)
+	if errors.Is(err, pgx.ErrNoRows) { return "", ErrNotFound }
+	return token, err
+}
+
+func (r *Repository) SaveCharacterMediaToken(ctx context.Context, characterID, token string) error {
+	_, err := r.db.Exec(ctx, `insert into character_media(character_id, media_token) values($1,$2)
+		on conflict(character_id) do update set media_token=excluded.media_token, updated_at=now()`, characterID, token)
+	return err
 }
 
 func (r *Repository) GetUserByPlatformID(ctx context.Context, platformUserID string) (*models.User, error) {
@@ -875,7 +938,7 @@ func (r *Repository) ActivePremiumSubscription(ctx context.Context, userID int64
 	err := r.db.QueryRow(ctx, `
 		select ps.plan, ps.amount::text, ps.period_days, coalesce(ps.payment_method_id, ''), ps.current_period_until, ps.next_charge_at
 		from premium_subscriptions ps
-		where ps.user_id = $1 and ps.active = true
+		where ps.user_id = $1 and ps.active = true and ps.current_period_until > now()
 		limit 1`, userID).Scan(&sub.Plan, &sub.Amount, &sub.PeriodDays, &sub.PaymentMethodID, &sub.CurrentPeriodUntil, &sub.NextChargeAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

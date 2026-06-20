@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ArtemSkynox8/tg-video-dating-bot/internal/config"
+	"github.com/ArtemSkynox8/tg-video-dating-bot/internal/ai"
 	"github.com/ArtemSkynox8/tg-video-dating-bot/internal/db"
 	"github.com/ArtemSkynox8/tg-video-dating-bot/internal/handlers"
 	"github.com/ArtemSkynox8/tg-video-dating-bot/internal/maxapi"
@@ -19,7 +20,7 @@ import (
 	"github.com/ArtemSkynox8/tg-video-dating-bot/internal/services"
 )
 
-const botTemporarilyDisabled = true
+const botTemporarilyDisabled = false
 
 func main() {
 	cfg := config.Load()
@@ -125,11 +126,11 @@ func initializeBot(ctx context.Context, cfg config.Config, webhook *dynamicWebho
 
 	repo := repositories.New(pool)
 	maxClient := maxapi.NewClient(cfg.MaxAPIBaseURL, cfg.MaxBotToken)
-	botService := services.NewDatingService(repo, maxClient, cfg.AdminPlatformIDs, cfg.PublicBaseURL, cfg.ReturnToBotURL, cfg.PremiumPrice, cfg.ContactInstructionVideoID, cfg.ContactInstructionVideoPath, cfg.FakeCirclesDir, cfg.FortuneWheelVideoID, cfg.FortuneWheelVideoPath)
+	aiClient := ai.NewClient(cfg.KIEBaseURL, cfg.KIEAPIKey, cfg.KIEModel)
+	botService := services.NewDatingService(repo, maxClient, aiClient, cfg.PublicBaseURL, cfg.SupportURL, cfg.FakeCirclesDir)
 	go botService.SeedFakeCircles(ctx)
 	webhook.Set(handlers.NewWebhookHandler(cfg, botService))
 	miniMux := http.NewServeMux()
-	handlers.NewMiniAppHandler(cfg, repo, maxClient).Register(miniMux)
 	paymentHandler := handlers.NewPaymentHandler(cfg, repo, maxClient)
 	paymentHandler.Register(miniMux)
 	paymentHandler.StartAutorenew(ctx)
@@ -144,11 +145,11 @@ func initializeBot(ctx context.Context, cfg config.Config, webhook *dynamicWebho
 			log.Printf("max webhook subscribed: %s", webhookURL)
 		}
 		if err := maxClient.SetCommands(ctx, []maxapi.Command{
-			{Name: "start", Description: "Запустить знакомства"},
-			{Name: "browse", Description: "Смотреть кружки"},
-			{Name: "matches", Description: "Взаимные лайки"},
-			{Name: "profile", Description: "Изменить анкету"},
+			{Name: "start", Description: "Главное меню"},
+			{Name: "chat", Description: "Начать общение"},
+			{Name: "character", Description: "Поменять персонажа"},
 			{Name: "subscription", Description: "Подписка"},
+			{Name: "support", Description: "Поддержка"},
 		}); err != nil {
 			log.Printf("set max commands: %v", err)
 		} else {

@@ -27,6 +27,10 @@ type Config struct {
 	FakeCirclesDir            string
 	FortuneWheelVideoID       string
 	FortuneWheelVideoPath     string
+	KIEBaseURL                string
+	KIEAPIKey                 string
+	KIEModel                  string
+	SupportURL                string
 }
 
 func Load() Config {
@@ -52,6 +56,10 @@ func Load() Config {
 		FakeCirclesDir:            getEnv("FAKE_CIRCLES_DIR", "assets/fake-circles"),
 		FortuneWheelVideoID:       os.Getenv("FORTUNE_WHEEL_VIDEO_ID"),
 		FortuneWheelVideoPath:     getEnv("FORTUNE_WHEEL_VIDEO_PATH", "assets/fortune-wheel/wheel.mp4"),
+		KIEBaseURL:                getEnv("KIE_BASE_URL", "https://api.kie.ai/v1"),
+		KIEAPIKey:                 os.Getenv("KIE_API_KEY"),
+		KIEModel:                  getEnv("KIE_MODEL", "grok-3-mini"),
+		SupportURL:                getEnv("SUPPORT_URL", "https://max.ru/id5156654"),
 	}
 }
 
