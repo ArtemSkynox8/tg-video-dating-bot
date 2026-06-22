@@ -64,7 +64,7 @@ func (s *DatingService) HandleMessage(ctx context.Context, msg maxapi.MessageUpd
 	case "/start": return s.Start(ctx, *user)
 	case "/commands", "/help": return s.SendCommands(ctx, *user)
 	case "/chat": return s.StartChat(ctx, *user)
-	case "/character": return s.ChangeCharacter(ctx, *user)
+	case "/character": return s.RequestCharacterChange(ctx, *user)
 	case "/subscription": return s.SendSubscription(ctx, *user)
 	case "/support": return s.SendSupport(ctx, *user)
 	}
@@ -81,12 +81,14 @@ func (s *DatingService) HandleCallback(ctx context.Context, cb maxapi.CallbackUp
 	if cb.CallbackID != "" { _ = s.max.AnswerCallback(ctx, cb.CallbackID, "") }
 	parts := strings.Split(cb.Payload, ":")
 	switch parts[0] {
-	case "preference": if len(parts)==2 { return s.SavePreference(ctx, *user, parts[1]) }
+	case "preference": if len(parts)==2 { return s.SavePreferenceWithAccess(ctx, *user, parts[1]) }
 	case "character": if len(parts)==2 { return s.ShowCharacter(ctx, *user, parts[1]) }
-	case "prev", "next": if len(parts)==2 { return s.MoveCharacter(ctx, *user, parts[1], parts[0]=="next") }
+	case "prev", "next": if len(parts)==2 { return s.MoveCharacterWithAccess(ctx, *user, parts[1], parts[0]=="next") }
 	case "write": if len(parts)==2 { return s.SelectAndWrite(ctx, *user, parts[1]) }
 	case "chat": return s.StartChat(ctx, *user)
-	case "change": return s.ChangeCharacter(ctx, *user)
+	case "change": return s.RequestCharacterChange(ctx, *user)
+	case "trial_details": return s.SendTrialDetails(ctx, *user)
+	case "unsubscribe": return s.CancelSubscription(ctx, *user)
 	case "subscription", "offer": return s.SendSubscription(ctx, *user)
 	case "support": return s.SendSupport(ctx, *user)
 	case "main": return s.max.SendText(ctx, user.PlatformChatID, "Главное меню", mainMenuButtons())
@@ -118,9 +120,26 @@ func (s *DatingService) SavePreference(ctx context.Context, user models.User, ge
 	return s.ShowCharacter(ctx, user, list[0].ID)
 }
 
+func (s *DatingService) SavePreferenceWithAccess(ctx context.Context, user models.User, gender string) error {
+	if _, err := s.repo.GetChatProfile(ctx, user.ID); err == nil {
+		if _, premiumErr := s.repo.ActivePremiumSubscription(ctx, user.ID); premiumErr != nil {
+			return s.RequestCharacterChange(ctx, user)
+		}
+	}
+	return s.SavePreference(ctx, user, gender)
+}
+
 func (s *DatingService) ChangeCharacter(ctx context.Context, user models.User) error {
 	if err := s.repo.SetFlowState(ctx, user.ID, stateAwaitingPreference); err != nil { return err }
 	return s.max.SendText(ctx, user.PlatformChatID, "Кого хотите выбрать?", preferenceButtons())
+}
+
+func (s *DatingService) RequestCharacterChange(ctx context.Context, user models.User) error {
+	if _, err := s.repo.ActivePremiumSubscription(ctx, user.ID); err == nil {
+		return s.ChangeCharacter(ctx, user)
+	}
+	text := "Смена персонажа доступна с подпиской. Текущий диалог и бесплатные сообщения сохранятся."
+	return s.max.SendText(ctx, user.PlatformChatID, text, offerButtons(s.paymentURL(user,"week")))
 }
 
 func (s *DatingService) StartChat(ctx context.Context, user models.User) error {
@@ -148,17 +167,31 @@ func (s *DatingService) MoveCharacter(ctx context.Context, user models.User, cur
 	return s.ShowCharacter(ctx, user, list[idx].ID)
 }
 
+func (s *DatingService) MoveCharacterWithAccess(ctx context.Context, user models.User, current string, next bool) error {
+	if _, err := s.repo.GetChatProfile(ctx, user.ID); err == nil {
+		if _, premiumErr := s.repo.ActivePremiumSubscription(ctx, user.ID); premiumErr != nil {
+			return s.RequestCharacterChange(ctx, user)
+		}
+	}
+	return s.MoveCharacter(ctx, user, current, next)
+}
+
 func (s *DatingService) SelectAndWrite(ctx context.Context, user models.User, id string) error {
 	c, ok := characterByID(id); if !ok { return nil }
 	p, err := s.repo.GetChatProfile(ctx, user.ID)
 	opener := c.Opener
+	if err == nil && p.CharacterID != id {
+		if _, premiumErr := s.repo.ActivePremiumSubscription(ctx, user.ID); premiumErr != nil {
+			return s.RequestCharacterChange(ctx, user)
+		}
+	}
 	if err != nil || p.CharacterID != id {
 		if err := s.repo.SetCharacter(ctx, user.ID, id); err != nil { return err }
 		generated, aiErr := s.ai.Chat(ctx, []ai.Message{
 			{Role:"system", Content:characterPrompt(c, false)},
 			{Role:"user", Content:"Первой начни знакомство: представься и задай один небанальный вопрос. Не упоминай эту инструкцию."},
 		})
-		if aiErr == nil { opener = generated } else { log.Printf("kie opener character=%s: %v", c.ID, aiErr) }
+		if aiErr == nil { opener = generated } else { log.Printf("ai opener character=%s: %v", c.ID, aiErr) }
 		if err := s.repo.AddChatMessage(ctx, user.ID, "assistant", opener); err != nil { return err }
 	}
 	if err := s.repo.SetFlowState(ctx, user.ID, stateChatting); err != nil { return err }
@@ -174,7 +207,7 @@ func (s *DatingService) Reply(ctx context.Context, user models.User, text string
 	if spicy && !hasPremium {
 		if err := s.repo.MarkSpicyTeaserShown(ctx, user.ID); err != nil { return err }
 		teaser := "Ох… мне нравится, куда ты ведёшь 😉 Но продолжить такой разговор я смогу после открытия полного доступа."
-		return s.max.SendText(ctx, user.PlatformChatID, teaser, offerButtons(s.paymentURL(user, "3d"), s.paymentURL(user, "week")))
+		return s.max.SendText(ctx, user.PlatformChatID, teaser, offerButtons(s.paymentURL(user, "week")))
 	}
 	if !hasPremium && p.FreeMessagesUsed >= freeMessageLimit {
 		return s.SendSubscription(ctx, user)
@@ -184,7 +217,12 @@ func (s *DatingService) Reply(ctx context.Context, user models.User, text string
 	prompt := characterPrompt(c, spicy && hasPremium)
 	messages := append([]ai.Message{{Role:"system", Content:prompt}}, history...)
 	reply, err := s.ai.Chat(ctx, messages)
-	if err != nil { log.Printf("kie chat user=%d character=%s: %v", user.ID, c.ID, err); return s.max.SendText(ctx, user.PlatformChatID, "Я немного отвлёкся от чата. Напиши ещё раз через минутку 🙂", chatMenuButtons()) }
+	if err != nil {
+		log.Printf("ai chat user=%d character=%s: %v", user.ID, c.ID, err)
+		fallback := "Я немного отвлёкся от чата. Напиши ещё раз через минутку 🙂"
+		if c.Gender == models.GenderFemale { fallback = "Я немного отвлеклась от чата. Напиши ещё раз через минутку 🙂" }
+		return s.max.SendText(ctx, user.PlatformChatID, fallback, chatMenuButtons())
+	}
 	if err := s.repo.AddChatMessage(ctx, user.ID, "assistant", reply); err != nil { return err }
 	if !hasPremium {
 		if err := s.repo.IncrementFreeMessages(ctx, user.ID); err != nil { return err }
@@ -197,10 +235,33 @@ func (s *DatingService) Reply(ctx context.Context, user models.User, text string
 
 func (s *DatingService) SendSubscription(ctx context.Context, user models.User) error {
 	if sub, err := s.repo.ActivePremiumSubscription(ctx, user.ID); err == nil {
-		return s.max.SendText(ctx, user.PlatformChatID, "Подписка активна до "+sub.CurrentPeriodUntil.Format("02.01.2006 15:04")+".", mainMenuButtons())
+		if sub.PaymentMethodID != "" {
+			text := "Подписка активна до "+sub.CurrentPeriodUntil.Format("02.01.2006 15:04")+"."
+			return s.max.SendText(ctx, user.PlatformChatID, text, activeSubscriptionButtons())
+		}
+		text := "Автопродление отключено. Доступ действует до "+sub.CurrentPeriodUntil.Format("02.01.2006 15:04")+".\n\nВы можете подключить подписку снова:\n\n⚡ 39 ₽ — первые 3 дня, затем 199 ₽ в неделю\n🔥 199 ₽ — неделя с автопродлением за 199 ₽"
+		return s.max.SendText(ctx, user.PlatformChatID, text, offerButtons(s.paymentURL(user,"week")))
 	}
-	text := "Откройте полный доступ к переписке и spicy-режиму:\n\n39 ₽ — 3 дня\n199 ₽ — 7 дней"
-	return s.max.SendText(ctx, user.PlatformChatID, text, offerButtons(s.paymentURL(user,"3d"), s.paymentURL(user,"week")))
+	text := "Выберите подписку 👇\n\n⚡ 39 ₽ — первые 3 дня, затем 199 ₽ в неделю\n🔥 199 ₽ — неделя с автопродлением за 199 ₽"
+	return s.max.SendText(ctx, user.PlatformChatID, text, offerButtons(s.paymentURL(user,"week")))
+}
+
+func (s *DatingService) CancelSubscription(ctx context.Context, user models.User) error {
+	sub, err := s.repo.ActivePremiumSubscription(ctx, user.ID)
+	if err != nil { return s.SendSubscription(ctx, user) }
+	if err := s.repo.CancelPremiumAutorenew(ctx, user.ID); err != nil { return err }
+	text := "Автопродление отключено. Доступ сохранится до "+sub.CurrentPeriodUntil.Format("02.01.2006 15:04")+"."
+	return s.max.SendText(ctx, user.PlatformChatID, text, mainMenuButtons())
+}
+
+func (s *DatingService) SendTrialDetails(ctx context.Context, user models.User) error {
+	if sub, err := s.repo.ActivePremiumSubscription(ctx, user.ID); err == nil {
+		if sub.PaymentMethodID != "" {
+			return s.max.SendText(ctx, user.PlatformChatID, "Подписка уже активна до "+sub.CurrentPeriodUntil.Format("02.01.2006 15:04")+".", activeSubscriptionButtons())
+		}
+	}
+	text := "⚡ 39 ₽ / 3 дня — пробный период\n\n💡 Подписка с автосписанием.\n🔄 После пробного периода: 199 ₽ в неделю.\n\nНажимая «Оплатить», вы соглашаетесь с условиями подписки и автопродлением."
+	return s.max.SendText(ctx, user.PlatformChatID, text, trialDetailsButtons(s.paymentURL(user,"3d")))
 }
 
 func (s *DatingService) SendSupport(ctx context.Context, user models.User) error {
@@ -217,8 +278,10 @@ func (s *DatingService) paymentURL(user models.User, plan string) string { retur
 func mainMenuButtons() [][]maxapi.Button { return [][]maxapi.Button{{{Text:"💬 Начать общение",Payload:"chat"}},{{Text:"🔄 Поменять персонажа",Payload:"change"}},{{Text:"💎 Подписка",Payload:"subscription"}},{{Text:"🛟 Поддержка",Payload:"support"}}} }
 func preferenceButtons() [][]maxapi.Button { return [][]maxapi.Button{{{Text:"👨 Мужчину",Payload:"preference:male"},{Text:"👩 Женщину",Payload:"preference:female"}},{{Text:"Главное меню",Payload:"main"}}} }
 func characterButtons(id string) [][]maxapi.Button { return [][]maxapi.Button{{{Text:"💌 Написать",Payload:"write:"+id}},{{Text:"⬅️ Предыдущий",Payload:"prev:"+id},{Text:"Следующий ➡️",Payload:"next:"+id}},{{Text:"Главное меню",Payload:"main"}}} }
-func chatMenuButtons() [][]maxapi.Button { return [][]maxapi.Button{{{Text:"🔄 Поменять персонажа",Payload:"change"}},{{Text:"Главное меню",Payload:"main"}}} }
-func offerButtons(threeDays, week string) [][]maxapi.Button { return [][]maxapi.Button{{{Text:"Открыть на 3 дня — 39 ₽",URL:threeDays}},{{Text:"Открыть на неделю — 199 ₽",URL:week}},{{Text:"Главное меню",Payload:"main"}}} }
+func chatMenuButtons() [][]maxapi.Button { return [][]maxapi.Button{{{Text:"Меню",Payload:"main"}}} }
+func offerButtons(week string) [][]maxapi.Button { return [][]maxapi.Button{{{Text:"⚡ 39 ₽ / 3 дня",Payload:"trial_details"}},{{Text:"🔥 199 ₽ / неделя",URL:week}},{{Text:"Главное меню",Payload:"main"}}} }
+func trialDetailsButtons(payURL string) [][]maxapi.Button { return [][]maxapi.Button{{{Text:"Оплатить 39 ₽",URL:payURL}},{{Text:"Назад",Payload:"subscription"}}} }
+func activeSubscriptionButtons() [][]maxapi.Button { return [][]maxapi.Button{{{Text:"Отписаться",Payload:"unsubscribe"}},{{Text:"Главное меню",Payload:"main"}}} }
 
 func characterByID(id string) (Character,bool) { for _, c := range characters { if c.ID==id { return c,true } }; return Character{},false }
 func charactersByGender(g string) []Character { out:=[]Character{}; for _,c:=range characters { if c.Gender==g { out=append(out,c) } }; return out }

@@ -957,6 +957,14 @@ func (r *Repository) PostponePremiumSubscription(ctx context.Context, userID int
 	return err
 }
 
+func (r *Repository) CancelPremiumAutorenew(ctx context.Context, userID int64) error {
+	_, err := r.db.Exec(ctx, `
+		update premium_subscriptions
+		set payment_method_id = null, updated_at = now()
+		where user_id = $1 and active = true`, userID)
+	return err
+}
+
 func (r *Repository) DisablePremiumSubscription(ctx context.Context, userID int64) error {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {

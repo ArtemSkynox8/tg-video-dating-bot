@@ -58,7 +58,7 @@ func (h *PaymentHandler) Register(mux *http.ServeMux) {
 func (h *PaymentHandler) offer(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = offerTemplate.Execute(w, map[string]string{
-		"Price": "39 рублей за 3 дня или 199 рублей за неделю",
+		"Price": "39 рублей за первые 3 дня с последующим автопродлением за 199 рублей в неделю либо 199 рублей за неделю сразу",
 		"BotURL": h.cfg.ReturnToBotURL,
 	})
 }
@@ -72,9 +72,11 @@ func (h *PaymentHandler) pay(w http.ResponseWriter, r *http.Request) {
 		h.renderPayMessage(w, "Пользователь не найден", "Вернитесь в бот и нажмите кнопку оплаты ещё раз.")
 		return
 	}
-	if _, activeErr := h.repo.ActivePremiumSubscription(r.Context(), user.ID); activeErr == nil {
-		h.renderPayMessage(w, "Premium уже активен", "Вернитесь в бот и продолжайте общение.")
-		return
+	if active, activeErr := h.repo.ActivePremiumSubscription(r.Context(), user.ID); activeErr == nil {
+		if active.PaymentMethodID != "" {
+			h.renderPayMessage(w, "Premium уже активен", "Сначала отключите текущую подписку в боте, если хотите выбрать другой тариф.")
+			return
+		}
 	}
 	if h.cfg.YooKassaShopID == "" || h.cfg.YooKassaSecretKey == "" {
 		h.renderPayMessage(w, "Касса не настроена", "Добавьте на сервер переменные YOOKASSA_SHOP_ID и YOOKASSA_SECRET_KEY, затем повторите оплату.")
@@ -124,9 +126,16 @@ func (h *PaymentHandler) success(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	plan := premiumPlanByCode(storedPayment.Plan)
+	renewalPlan := renewalPlanFor(plan)
 	paymentMethodID := firstNonEmptyPayment(payment.PaymentMethod.ID, storedPayment.PaymentMethodID)
-	until := time.Now().AddDate(0, 0, plan.PeriodDays)
-	if err := h.repo.SetPremiumSubscription(r.Context(), user.ID, plan.Code, plan.Amount, plan.PeriodDays, paymentMethodID, until); err != nil {
+	until := h.nextPremiumUntil(r.Context(), user.ID, plan)
+	if storedPayment.Status == "succeeded" {
+		if active, activeErr := h.repo.ActivePremiumSubscription(r.Context(), user.ID); activeErr == nil {
+			h.renderPayMessage(w, "Premium активирован", "Подписка активна до "+active.CurrentPeriodUntil.Format("02.01.2006 15:04")+". Сейчас вернём вас в бот.", true)
+			return
+		}
+	}
+	if err := h.repo.SetPremiumSubscription(r.Context(), user.ID, renewalPlan.Code, renewalPlan.Amount, renewalPlan.PeriodDays, paymentMethodID, until); err != nil {
 		log.Printf("pay success set premium user=%s payment=%s: %v", platformUserID, storedPayment.ExternalID, err)
 		h.renderPayMessage(w, "Premium оплачен", "Оплата прошла, но доступ не включился автоматически. Напишите администратору.")
 		return
@@ -182,8 +191,9 @@ func (h *PaymentHandler) applyYooKassaPayment(ctx context.Context, payment yooKa
 		return nil
 	}
 	plan := premiumPlanByCode(stored.Plan)
-	until := time.Now().AddDate(0, 0, plan.PeriodDays)
-	if err := h.repo.SetPremiumSubscription(ctx, userID, plan.Code, plan.Amount, plan.PeriodDays, paymentMethodID, until); err != nil {
+	renewalPlan := renewalPlanFor(plan)
+	until := h.nextPremiumUntil(ctx, userID, plan)
+	if err := h.repo.SetPremiumSubscription(ctx, userID, renewalPlan.Code, renewalPlan.Amount, renewalPlan.PeriodDays, paymentMethodID, until); err != nil {
 		return err
 	}
 	if userForAdmin, err := h.repo.GetUserByID(ctx, userID); err == nil {
@@ -306,6 +316,19 @@ func premiumPlanByCode(code string) premiumPlan {
 		return plan
 	}
 	return premiumPlans["week"]
+}
+
+func renewalPlanFor(initial premiumPlan) premiumPlan {
+	if initial.Code == "3d" { return premiumPlans["week"] }
+	return initial
+}
+
+func (h *PaymentHandler) nextPremiumUntil(ctx context.Context, userID int64, plan premiumPlan) time.Time {
+	base := time.Now()
+	if active, err := h.repo.ActivePremiumSubscription(ctx, userID); err == nil && active.CurrentPeriodUntil.After(base) {
+		base = active.CurrentPeriodUntil
+	}
+	return base.AddDate(0, 0, plan.PeriodDays)
 }
 
 func firstNonEmptyPayment(values ...string) string {
@@ -546,17 +569,18 @@ var offerTemplate = template.Must(template.New("offer").Parse(`<!doctype html>
 <h2>1. Предмет</h2>
 <p>Пользователь получает Premium доступ к неограниченной переписке с виртуальными ИИ-персонажами и дополнительному режиму общения для совершеннолетних.</p>
 <h2>2. Стоимость и порядок оплаты</h2>
-<p>Стоимость Premium доступа составляет {{.Price}}. Оплата производится через платёжного провайдера. Доступ активируется после подтверждения успешной оплаты.</p>
+<p>Стоимость Premium доступа составляет {{.Price}}. Тариф 39 рублей является вводным периодом на 3 дня и после его окончания автоматически продлевается за 199 рублей каждые 7 дней до отмены подписки. Оплата производится через платёжного провайдера. Доступ активируется после подтверждения успешной оплаты.</p>
+<p>Пользователь может отключить автопродление в разделе «Подписка» внутри бота. После отключения доступ сохраняется до окончания уже оплаченного периода.</p>
 <h2>3. Условия использования</h2>
 <p>Пользователь обязуется не публиковать незаконные материалы, спам, оскорбления, чужие персональные данные, материалы сексуального характера с участием несовершеннолетних, мошеннические предложения и иной вредоносный контент.</p>
 <h2>4. Модерация и ограничения</h2>
-<p>Администрация вправе ограничить доступ, скрыть анкету, удалить видео или заблокировать пользователя при нарушении правил, жалобах других пользователей, подозрении на мошенничество или угрозе безопасности сервиса.</p>
+<p>Администрация вправе ограничить доступ или заблокировать пользователя при нарушении правил, подозрении на мошенничество или угрозе безопасности сервиса.</p>
 <h2>5. Возвраты</h2>
 <p>Premium доступ относится к цифровой услуге. После активации доступа возврат возможен только если услуга не была предоставлена по технической причине на стороне сервиса. Для рассмотрения обращения пользователь должен предоставить данные платежа.</p>
 <h2>6. Ответственность</h2>
 <p>Персонажи являются виртуальными и создаются искусственным интеллектом. Сервис не обещает реальных знакомств, встреч или отношений.</p>
 <h2>7. Персональные данные</h2>
-<p>Сервис обрабатывает данные, необходимые для работы бота: идентификатор пользователя MAX, имя анкеты, выбранные параметры, видеоанкеты, лайки, жалобы и сведения об оплате. Данные используются для оказания услуги, модерации и поддержки.</p>
+<p>Сервис обрабатывает данные, необходимые для работы бота: идентификатор пользователя MAX, имя, выбранного персонажа, историю переписки и сведения об оплате. Данные используются для оказания услуги, модерации и поддержки.</p>
 <h2>8. Изменение условий</h2>
 <p>Администрация может обновлять условия оферты. Новая редакция применяется с момента публикации на этой странице.</p>
 <h2>9. Принятие оферты</h2>
