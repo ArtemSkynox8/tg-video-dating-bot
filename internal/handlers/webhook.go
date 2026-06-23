@@ -85,6 +85,7 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		log.Printf("handle update %s: %v", update.UpdateID, err)
+		h.service.RecordError(ctx, "webhook", err)
 		http.Error(w, "handler error", http.StatusInternalServerError)
 		return
 	}

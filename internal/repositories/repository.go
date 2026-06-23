@@ -1046,17 +1046,13 @@ func (r *Repository) ResetUser(ctx context.Context, userID int64) error {
 func (r *Repository) ClearAllData(ctx context.Context) error {
 	_, err := r.db.Exec(ctx, `
 		truncate table
+			chat_messages,
+			chat_profiles,
 			user_action_logs,
-			referral_contact_opens,
 			premium_subscriptions,
 			premium_payments,
-			user_reports,
-			video_reports,
-			priority_queue,
-			matches,
-			likes,
-			views,
-			videos,
+			admin_error_logs,
+			admin_push_runs,
 			users
 		restart identity cascade`)
 	return err

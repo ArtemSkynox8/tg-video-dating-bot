@@ -39,11 +39,11 @@ type DatingService struct {
 	repo *repositories.Repository
 	max *maxapi.Client
 	ai *ai.Client
-	publicBaseURL, supportURL, circlesDir string
+	publicBaseURL, supportURL, circlesDir, returnToBotURL, adminClaimSecret string
 }
 
-func NewDatingService(repo *repositories.Repository, max *maxapi.Client, aiClient *ai.Client, publicBaseURL, supportURL, circlesDir string) *DatingService {
-	return &DatingService{repo:repo, max:max, ai:aiClient, publicBaseURL:strings.TrimRight(publicBaseURL,"/"), supportURL:strings.TrimSpace(supportURL), circlesDir:strings.TrimSpace(circlesDir)}
+func NewDatingService(repo *repositories.Repository, max *maxapi.Client, aiClient *ai.Client, publicBaseURL, supportURL, circlesDir, returnToBotURL, adminClaimSecret string) *DatingService {
+	return &DatingService{repo:repo, max:max, ai:aiClient, publicBaseURL:strings.TrimRight(publicBaseURL,"/"), supportURL:strings.TrimSpace(supportURL), circlesDir:strings.TrimSpace(circlesDir), returnToBotURL:strings.TrimSpace(returnToBotURL), adminClaimSecret:strings.TrimSpace(adminClaimSecret)}
 }
 
 func (s *DatingService) SeedFakeCircles(ctx context.Context) {
@@ -60,6 +60,7 @@ func (s *DatingService) HandleMessage(ctx context.Context, msg maxapi.MessageUpd
 	user, err := s.repo.UpsertPlatformUser(ctx, models.User{PlatformUserID:msg.From.ID, PlatformChatID:msg.Chat.ID, PlatformDialogID:msg.Dialog.ID, Username:msg.From.Username})
 	if err != nil { return err }
 	text := strings.TrimSpace(msg.Text)
+	if handled, err := s.HandleAdminCommand(ctx, *user, text); handled { return err }
 	switch text {
 	case "/start": return s.Start(ctx, *user)
 	case "/commands", "/help": return s.SendCommands(ctx, *user)
@@ -68,7 +69,11 @@ func (s *DatingService) HandleMessage(ctx context.Context, msg maxapi.MessageUpd
 	case "/subscription": return s.SendSubscription(ctx, *user)
 	case "/support": return s.SendSupport(ctx, *user)
 	}
-	if strings.HasPrefix(text, "/start ") { return s.Start(ctx, *user) }
+	if strings.HasPrefix(text, "/start ") {
+		tag := strings.TrimSpace(strings.TrimPrefix(text, "/start "))
+		if tag != "" { _ = s.repo.SetAdTagIfEmpty(ctx, user.ID, tag) }
+		return s.Start(ctx, *user)
+	}
 	if user.FlowState == stateAwaitingName || user.Name == "" { return s.SaveName(ctx, *user, text) }
 	if user.FlowState == stateAwaitingPreference { return s.max.SendText(ctx, user.PlatformChatID, "Выберите, кого вы хотите найти:", preferenceButtons()) }
 	if user.FlowState == stateChatting && text != "" { return s.Reply(ctx, *user, text) }
@@ -219,6 +224,7 @@ func (s *DatingService) Reply(ctx context.Context, user models.User, text string
 	reply, err := s.ai.Chat(ctx, messages)
 	if err != nil {
 		log.Printf("ai chat user=%d character=%s: %v", user.ID, c.ID, err)
+		_ = s.repo.RecordAdminError(ctx, "ai_chat", err)
 		fallback := "Я немного отвлёкся от чата. Напиши ещё раз через минутку 🙂"
 		if c.Gender == models.GenderFemale { fallback = "Я немного отвлеклась от чата. Напиши ещё раз через минутку 🙂" }
 		return s.max.SendText(ctx, user.PlatformChatID, fallback, chatMenuButtons())
@@ -234,6 +240,7 @@ func (s *DatingService) Reply(ctx context.Context, user models.User, text string
 }
 
 func (s *DatingService) SendSubscription(ctx context.Context, user models.User) error {
+	_, _, _ = s.repo.CreateOfferReachedLog(ctx, user.ID, "subscription")
 	if sub, err := s.repo.ActivePremiumSubscription(ctx, user.ID); err == nil {
 		if sub.PaymentMethodID != "" {
 			text := "Подписка активна до "+sub.CurrentPeriodUntil.Format("02.01.2006 15:04")+"."

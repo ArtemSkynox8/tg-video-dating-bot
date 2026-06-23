@@ -18,6 +18,7 @@ type Config struct {
 	RedisAddr                 string
 	UploadDir                 string
 	AdminPlatformIDs          []string
+	AdminClaimSecret          string
 	YooKassaShopID            string
 	YooKassaSecretKey         string
 	YooKassaReceiptEmail      string
@@ -46,6 +47,7 @@ func Load() Config {
 		RedisAddr:                 getEnv("REDIS_ADDR", "localhost:6379"),
 		UploadDir:                 getEnv("UPLOAD_DIR", "/app/uploads"),
 		AdminPlatformIDs:          splitCSV(os.Getenv("ADMIN_PLATFORM_IDS")),
+		AdminClaimSecret:          os.Getenv("ADMIN_CLAIM_SECRET"),
 		YooKassaShopID:            os.Getenv("YOOKASSA_SHOP_ID"),
 		YooKassaSecretKey:         os.Getenv("YOOKASSA_SECRET_KEY"),
 		YooKassaReceiptEmail:      getEnv("YOOKASSA_RECEIPT_EMAIL", "artem.skynox@yandex.ru"),

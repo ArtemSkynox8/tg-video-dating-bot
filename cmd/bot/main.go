@@ -125,9 +125,13 @@ func initializeBot(ctx context.Context, cfg config.Config, webhook *dynamicWebho
 	}
 
 	repo := repositories.New(pool)
+	if err := repo.SeedAdmins(ctx, cfg.AdminPlatformIDs); err != nil {
+		log.Printf("seed admins: %v", err)
+		return
+	}
 	maxClient := maxapi.NewClient(cfg.MaxAPIBaseURL, cfg.MaxBotToken)
 	aiClient := ai.NewClient(cfg.ImageServiceURL, cfg.ImageServiceSecret)
-	botService := services.NewDatingService(repo, maxClient, aiClient, cfg.PublicBaseURL, cfg.SupportURL, cfg.FakeCirclesDir)
+	botService := services.NewDatingService(repo, maxClient, aiClient, cfg.PublicBaseURL, cfg.SupportURL, cfg.FakeCirclesDir, cfg.ReturnToBotURL, cfg.AdminClaimSecret)
 	go botService.SeedFakeCircles(ctx)
 	webhook.Set(handlers.NewWebhookHandler(cfg, botService))
 	miniMux := http.NewServeMux()
