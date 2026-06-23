@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ArtemSkynox8/tg-video-dating-bot/internal/models"
 )
@@ -79,3 +80,31 @@ func (s *DatingService) HandleAdminCommand(ctx context.Context,user models.User,
 func(s *DatingService)sendAdminPush(ctx context.Context,users []models.User,text string,offer bool)(int,int){ok,failed:=0,0;for _,u:=range users{var err error;if offer{err=s.max.SendText(ctx,u.PlatformChatID,text,offerButtons(s.paymentURL(u,"week")))}else{err=s.max.SendText(ctx,u.PlatformChatID,text,nil)};if err!=nil{failed++;_ = s.repo.RecordAdminError(ctx,"push",err)}else{ok++}};return ok,failed}
 func truncateAdmin(v string,n int)string{r:=[]rune(v);if len(r)<=n{return v};return string(r[:n])+"…"}
 func(s *DatingService)RecordError(ctx context.Context,source string,err error){_ = s.repo.RecordAdminError(ctx,source,err)}
+
+func (s *DatingService) notifyAdminsAsync(text string) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		ids, err := s.repo.ListAdmins(ctx)
+		if err != nil { _ = s.repo.RecordAdminError(ctx, "admin_notification", err); return }
+		for _, id := range ids {
+			admin, err := s.repo.GetUserByPlatformID(ctx, id)
+			if err != nil { continue }
+			if err := s.max.SendText(ctx, admin.PlatformChatID, text, nil); err != nil { _ = s.repo.RecordAdminError(ctx, "admin_notification", err) }
+		}
+	}()
+}
+
+func (s *DatingService) logPreOfferMessage(ctx context.Context, user models.User, text string, count int) {
+	tag, err := s.repo.CreatePreOfferMessageLog(ctx, user.ID, text, count)
+	if err != nil { _ = s.repo.RecordAdminError(ctx, "pre_offer_log", err); return }
+	if strings.TrimSpace(tag) == "" { tag = "без метки" }
+	s.notifyAdminsAsync(fmt.Sprintf("Сообщение до оффера\nID: %s\nTag: %s\nCount: %d\nText: %s", user.PlatformUserID, tag, count, truncateAdmin(text, 900)))
+}
+
+func (s *DatingService) logOfferReached(ctx context.Context, user models.User, reason string) {
+	tag, offerType, err := s.repo.CreateOfferReachedLog(ctx, user.ID, reason)
+	if err != nil { _ = s.repo.RecordAdminError(ctx, "offer_log", err); return }
+	if strings.TrimSpace(tag) == "" { tag = "без метки" }
+	s.notifyAdminsAsync(fmt.Sprintf("Дошёл до оффера\nID: %s\nTag: %s\nReason: %s\nType: %s", user.PlatformUserID, tag, reason, offerType))
+}

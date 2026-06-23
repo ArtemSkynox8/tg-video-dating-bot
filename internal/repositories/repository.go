@@ -469,6 +469,23 @@ func (r *Repository) CreateUserActionLog(ctx context.Context, userID int64, acti
 	return err
 }
 
+func (r *Repository) CreatePreOfferMessageLog(ctx context.Context, userID int64, text string, count int) (string, error) {
+	var tag string
+	err := r.db.QueryRow(ctx, `
+		with inserted as (
+			insert into user_action_logs (user_id, action, payload)
+			select $1, 'pre_offer_user_message', jsonb_build_object(
+				'tag', coalesce(nullif(ad_tag, ''), 'без метки'),
+				'count', $3::integer,
+				'message', left($2::text, 900)
+			)
+			from users where id = $1
+			returning payload->>'tag' as tag
+		)
+		select tag from inserted`, userID, text, count).Scan(&tag)
+	return tag, err
+}
+
 func (r *Repository) CreateOfferReachedLog(ctx context.Context, userID int64, reason string) (string, string, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
@@ -506,7 +523,7 @@ func (r *Repository) AdStats(ctx context.Context, tag string) ([]models.AdStats,
 			group by 1
 		),
 		offer_stats as (
-			select coalesce(nullif(u.ad_tag, ''), 'без метки') as tag, count(*) as offer
+			select coalesce(nullif(u.ad_tag, ''), 'без метки') as tag, count(distinct l.user_id) as offer
 			from user_action_logs l
 			join users u on u.id = l.user_id
 			where l.action = 'offer_reached'

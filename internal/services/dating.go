@@ -143,6 +143,7 @@ func (s *DatingService) RequestCharacterChange(ctx context.Context, user models.
 	if _, err := s.repo.ActivePremiumSubscription(ctx, user.ID); err == nil {
 		return s.ChangeCharacter(ctx, user)
 	}
+	s.logOfferReached(ctx, user, "character_change")
 	text := "Смена персонажа доступна с подпиской. Текущий диалог и бесплатные сообщения сохранятся."
 	return s.max.SendText(ctx, user.PlatformChatID, text, offerButtons(s.paymentURL(user,"week")))
 }
@@ -209,8 +210,10 @@ func (s *DatingService) Reply(ctx context.Context, user models.User, text string
 	_, premiumErr := s.repo.ActivePremiumSubscription(ctx, user.ID)
 	hasPremium := premiumErr == nil
 	spicy := isSpicy(text)
+	if !hasPremium && p.FreeMessagesUsed < freeMessageLimit { s.logPreOfferMessage(ctx, user, text, p.FreeMessagesUsed+1) }
 	if spicy && !hasPremium {
 		if err := s.repo.MarkSpicyTeaserShown(ctx, user.ID); err != nil { return err }
+		s.logOfferReached(ctx, user, "spicy")
 		teaser := "Ох… мне нравится, куда ты ведёшь 😉 Но продолжить такой разговор я смогу после открытия полного доступа."
 		return s.max.SendText(ctx, user.PlatformChatID, teaser, offerButtons(s.paymentURL(user, "week")))
 	}
@@ -240,7 +243,6 @@ func (s *DatingService) Reply(ctx context.Context, user models.User, text string
 }
 
 func (s *DatingService) SendSubscription(ctx context.Context, user models.User) error {
-	_, _, _ = s.repo.CreateOfferReachedLog(ctx, user.ID, "subscription")
 	if sub, err := s.repo.ActivePremiumSubscription(ctx, user.ID); err == nil {
 		if sub.PaymentMethodID != "" {
 			text := "Подписка активна до "+sub.CurrentPeriodUntil.Format("02.01.2006 15:04")+"."
@@ -249,6 +251,7 @@ func (s *DatingService) SendSubscription(ctx context.Context, user models.User) 
 		text := "Автопродление отключено. Доступ действует до "+sub.CurrentPeriodUntil.Format("02.01.2006 15:04")+".\n\nВы можете подключить подписку снова:\n\n⚡ 39 ₽ — первые 3 дня, затем 199 ₽ в неделю\n🔥 199 ₽ — неделя с автопродлением за 199 ₽"
 		return s.max.SendText(ctx, user.PlatformChatID, text, offerButtons(s.paymentURL(user,"week")))
 	}
+	s.logOfferReached(ctx, user, "subscription")
 	text := "Выберите подписку 👇\n\n⚡ 39 ₽ — первые 3 дня, затем 199 ₽ в неделю\n🔥 199 ₽ — неделя с автопродлением за 199 ₽"
 	return s.max.SendText(ctx, user.PlatformChatID, text, offerButtons(s.paymentURL(user,"week")))
 }

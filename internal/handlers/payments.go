@@ -297,7 +297,12 @@ func (h *PaymentHandler) notifyAdminPaymentEvent(ctx context.Context, user model
 	}
 	lines = append(lines, extra...)
 	text := strings.Join(lines, "\n")
-	for _, adminID := range h.cfg.AdminPlatformIDs {
+	adminIDs, err := h.repo.ListAdmins(ctx)
+	if err != nil {
+		log.Printf("payment admin list title=%s: %v", title, err)
+		adminIDs = h.cfg.AdminPlatformIDs
+	}
+	for _, adminID := range adminIDs {
 		admin, err := h.repo.GetUserByPlatformID(ctx, adminID)
 		if err != nil {
 			continue
