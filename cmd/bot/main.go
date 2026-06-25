@@ -36,10 +36,6 @@ func main() {
 	}
 
 	repo := repositories.New(pool)
-	if err := repo.SeedAdmins(ctx, cfg.AdminPlatformIDs); err != nil {
-		log.Printf("seed admins: %v", err)
-		return
-	}
 	maxClient := maxapi.NewClient(cfg.MaxAPIBaseURL, cfg.MaxBotToken)
 	kinguinClient := kinguin.NewClient(cfg)
 	yooKassa := payments.NewYooKassa(cfg)
