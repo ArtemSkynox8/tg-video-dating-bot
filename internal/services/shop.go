@@ -72,6 +72,19 @@ func (s *ShopService) CompletePaidOrder(ctx context.Context, orderID int64, paym
 	if err := s.repo.MarkOrderPaid(ctx, order.ID, paymentID); err != nil {
 		return err
 	}
+	if s.cfg.KinguinAPIKey == "" || strings.HasPrefix(order.KinguinProductID, "stub-") {
+		if err := s.repo.MarkOrderError(ctx, order.ID, models.OrderStatusManual, "manual delivery mode"); err != nil {
+			return err
+		}
+		_ = s.notifyAdmins(ctx, "Оплачен заказ Roblox Gift Card",
+			"Order: "+fmt.Sprint(order.ID),
+			"User: "+order.PlatformUserID,
+			"Nominal: "+order.ProductLabel,
+			"Amount: "+fmt.Sprintf("%.0f руб.", order.OrderSum),
+			"Payment: "+paymentID,
+		)
+		return s.max.SendText(ctx, order.PlatformChatID, fmt.Sprintf("Оплата получена. Заказ #%d: %s на сумму %.0f руб.\n\nКод будет выдан вручную в ближайшее время.", order.ID, order.ProductLabel, order.OrderSum), nil)
+	}
 	result, err := s.kinguin.CreateOrder(ctx, order.KinguinProductID, fmt.Sprintf("max-%d", order.ID))
 	if err != nil {
 		_ = s.repo.MarkOrderError(ctx, order.ID, models.OrderStatusManual, err.Error())
@@ -112,39 +125,28 @@ func (s *ShopService) sendStart(ctx context.Context, chatID string) error {
 func (s *ShopService) sendNominals(ctx context.Context, chatID string) error {
 	rows := [][]maxapi.Button{}
 	for _, product := range s.cfg.Products {
-		if product.KinguinProductID == "" {
-			continue
-		}
-		rows = append(rows, []maxapi.Button{{Text: product.Label + " (" + product.Card + ")", Payload: "nominal:" + product.Code}})
-	}
-	if len(rows) == 0 {
-		return s.max.SendText(ctx, chatID, "Каталог пока не настроен. Добавьте PRODUCT_400_ROBUX и остальные ID товаров на сервере.", nil)
+		rows = append(rows, []maxapi.Button{{Text: fmt.Sprintf("%s - %.0f руб.", product.Label, product.PriceRUB), Payload: "nominal:" + product.Code}})
 	}
 	return s.max.SendText(ctx, chatID, "Выберите номинал:", rows)
 }
 
 func (s *ShopService) createOrder(ctx context.Context, user *models.User, code string) error {
 	product, ok := s.productByCode(code)
-	if !ok || product.KinguinProductID == "" {
+	if !ok {
 		return s.max.SendText(ctx, user.PlatformChatID, "Этот номинал пока не настроен.", nil)
 	}
-	quote, err := s.kinguin.Product(ctx, product.KinguinProductID)
-	if err != nil {
-		return s.max.SendText(ctx, user.PlatformChatID, "Не удалось проверить товар. Попробуйте позже.", nil)
+	orderSum := product.PriceRUB
+	productID := product.KinguinProductID
+	if productID == "" {
+		productID = "stub-" + product.Code
 	}
-	if quote.Qty <= 0 {
-		return s.max.SendText(ctx, user.PlatformChatID, "Товар временно закончился. Попробуйте выбрать другой номинал.", [][]maxapi.Button{
-			{{Text: "Выбрать другой номинал", Payload: "buy"}},
-		})
-	}
-	orderSum := s.calculateRUB(quote.Price, quote.Currency)
 	order, err := s.repo.CreateOrder(ctx, models.Order{
 		UserID:           user.ID,
 		NominalCode:      product.Code,
 		ProductLabel:     product.Label,
-		KinguinProductID: product.KinguinProductID,
-		SourcePrice:      quote.Price,
-		SourceCurrency:   quote.Currency,
+		KinguinProductID: productID,
+		SourcePrice:      orderSum,
+		SourceCurrency:   "RUB",
 		OrderSum:         orderSum,
 		Status:           models.OrderStatusCreated,
 		PaymentProvider:  "yookassa",
@@ -164,7 +166,7 @@ func (s *ShopService) createOrder(ctx context.Context, user *models.User, code s
 		return err
 	}
 	return s.max.SendText(ctx, user.PlatformChatID,
-		fmt.Sprintf("Сумма к оплате: %.0f руб.\nПосле оплаты код придет сюда автоматически.", orderSum),
+		fmt.Sprintf("Счет на оплату: %s\nСумма к оплате: %.0f руб.\n\nПосле оплаты мы проверим заказ и выдадим код.", product.Label, orderSum),
 		[][]maxapi.Button{{{Text: "Оплатить", URL: payment.URL}}})
 }
 

@@ -52,7 +52,7 @@ func (h *PaymentHandler) success(w http.ResponseWriter, r *http.Request) {
 		if err := h.service.CompletePaidOrder(r.Context(), order.ID, payment.ID); err != nil {
 			log.Printf("complete paid order=%d: %v", order.ID, err)
 		}
-		h.render(w, "Оплата прошла", "Код активации отправлен в бот.")
+		h.render(w, "Оплата прошла", "Заказ принят. Вернитесь в бот, там будет статус выдачи кода.")
 		return
 	}
 	h.render(w, "Оплата еще не завершена", "Текущий статус: "+payment.Status+". Завершите платеж и вернитесь в бот.")
