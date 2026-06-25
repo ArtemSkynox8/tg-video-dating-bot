@@ -1,49 +1,80 @@
-# MAX Video Dating Bot
+# MAX Robux Gift Card Bot
 
-Dating bot for MAX messenger where users meet through short videos.
+Go-сервер для MAX-бота, который продает Roblox Gift Cards через Kinguin и выдает код после успешной оплаты YooKassa.
 
-## Stack
+## Что умеет
 
-- Go
-- MAX Bot API over HTTPS
-- PostgreSQL
-- Redis-ready architecture
-- Docker Compose
+- Стартовое меню в MAX.
+- Кнопки номиналов: 400, 800, 2000, 4500 Robux.
+- Проверка наличия и цены товара в Kinguin.
+- Расчет цены в рублях с курсом и наценкой.
+- Создание платежной ссылки YooKassa.
+- Webhook успешной оплаты.
+- Автоматический выкуп кода в Kinguin.
+- Отправка кода пользователю в MAX.
+- Статистика заказов для админов через `/stats`.
 
-## Local Run
+## Настройка
 
-1. Copy `.env.example` to `.env`.
-2. Fill `MAX_BOT_TOKEN`, `MAX_WEBHOOK_SECRET`, and `PUBLIC_BASE_URL`.
-3. Start PostgreSQL and Redis:
-
-```bash
-docker compose up -d postgres redis
-```
-
-4. Run migrations:
+Скопируйте пример env:
 
 ```bash
-docker compose --profile tools run --rm migrate
+cp .env.example .env
 ```
 
-5. Start the bot:
+Заполните:
+
+- `MAX_BOT_TOKEN` - токен бота MAX.
+- `MAX_WEBHOOK_SECRET` - секрет webhook.
+- `PUBLIC_BASE_URL` - публичный HTTPS-адрес сервера.
+- `KINGUIN_API_KEY` - API-ключ Kinguin.
+- `PRODUCT_400_ROBUX`, `PRODUCT_800_ROBUX`, `PRODUCT_2000_ROBUX`, `PRODUCT_4500_ROBUX` - ID товаров Kinguin.
+- `YOOKASSA_SHOP_ID`, `YOOKASSA_SECRET_KEY` - платежные доступы.
+- `ADMIN_PLATFORM_IDS` - ID админов через запятую.
+
+Токены не нужно хранить в git. Если токен MAX уже был отправлен в переписке, лучше перевыпустить его в кабинете.
+
+## Запуск
 
 ```bash
-docker compose up --build
+docker compose up -d --build
 ```
 
-Webhook endpoint:
+Локально:
+
+```bash
+go run ./cmd/bot
+```
+
+## Webhook
+
+При запуске сервер сам пытается подписать MAX webhook:
 
 ```text
-POST /webhook/max
+POST {PUBLIC_BASE_URL}/webhook/max
 ```
 
-Healthcheck:
+YooKassa webhook:
 
 ```text
-GET /healthz
+POST {PUBLIC_BASE_URL}/pay/yookassa/webhook
 ```
 
-The code intentionally uses platform-neutral names: `platform_user_id`,
-`platform_media_id`, `chat_id`, and `message_id`, so another messenger adapter can
-be added later.
+Return URL для платежей:
+
+```text
+GET {PUBLIC_BASE_URL}/pay/success?order={id}
+```
+
+## Статусы заказов
+
+- `created` - заказ создан.
+- `pending` - платежная ссылка создана.
+- `paid` - платеж подтвержден.
+- `success` - код куплен и выдан.
+- `error` - ошибка до оплаты или при создании платежа.
+- `manual` - деньги списаны, но код требует ручной выдачи.
+
+## Важные замечания
+
+Точные поля ответа Kinguin могут отличаться от аккаунта/API-версии. Клиент старается найти `price`, `qty`, `code` в нескольких распространенных местах, но после подключения реального Kinguin-ключа нужно сделать тестовую покупку на минимальном номинале.

@@ -4,7 +4,6 @@ services:
     env_file: .env
     depends_on:
       - postgres
-      - redis
     ports:
       - "8080:8080"
 
@@ -13,25 +12,20 @@ services:
     profiles: ["tools"]
     volumes:
       - ./migrations:/migrations:ro
-    command: ["-path", "/migrations", "-database", "postgres://dating:dating@postgres:5432/dating?sslmode=disable", "up"]
+    command: ["-path", "/migrations", "-database", "postgres://robux:robux@postgres:5432/robux?sslmode=disable", "up"]
     depends_on:
       - postgres
 
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: dating
-      POSTGRES_PASSWORD: dating
-      POSTGRES_DB: dating
+      POSTGRES_USER: robux
+      POSTGRES_PASSWORD: robux
+      POSTGRES_DB: robux
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
-
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
 
 volumes:
   postgres_data:

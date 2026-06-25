@@ -7,12 +7,10 @@ RUN go mod tidy
 RUN CGO_ENABLED=0 GOOS=linux go build -o /out/bot ./cmd/bot
 
 FROM alpine:3.20
-RUN apk add --no-cache ca-certificates curl ffmpeg
+RUN apk add --no-cache ca-certificates curl
 RUN adduser -D -H app
 WORKDIR /app
 COPY --from=build /out/bot /app/bot
-COPY --from=build /src/assets /app/assets
-RUN mkdir -p /app/uploads && chown -R app:app /app/uploads
 USER app
 EXPOSE 8080
 HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 CMD curl -fsS http://127.0.0.1:8080/healthz || exit 1
