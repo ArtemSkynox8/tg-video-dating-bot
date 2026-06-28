@@ -81,10 +81,10 @@ func Load() Config {
 
 func loadProducts() []Product {
 	return []Product{
-		{Code: "400", Label: "400 Robux", Card: "$5", KinguinProductID: os.Getenv("PRODUCT_400_ROBUX"), PriceRUB: floatEnv("ROBUX_400_PRICE_RUB", 499)},
-		{Code: "800", Label: "800 Robux", Card: "$10", KinguinProductID: os.Getenv("PRODUCT_800_ROBUX"), PriceRUB: floatEnv("ROBUX_800_PRICE_RUB", 899)},
-		{Code: "2000", Label: "2000 Robux", Card: "$25", KinguinProductID: os.Getenv("PRODUCT_2000_ROBUX"), PriceRUB: floatEnv("ROBUX_2000_PRICE_RUB", 2199)},
-		{Code: "4500", Label: "4500 Robux", Card: "$50", KinguinProductID: os.Getenv("PRODUCT_4500_ROBUX"), PriceRUB: floatEnv("ROBUX_4500_PRICE_RUB", 4299)},
+		{Code: "400", Label: "400 Robux", Card: "Region Free", KinguinProductID: getEnv("PRODUCT_400_ROBUX", "107368"), PriceRUB: floatEnv("ROBUX_400_PRICE_RUB", 499)},
+		{Code: "700", Label: "700 Robux", Card: "Region Free", KinguinProductID: getEnv("PRODUCT_700_ROBUX", "357198"), PriceRUB: floatEnv("ROBUX_700_PRICE_RUB", 799)},
+		{Code: "800", Label: "800 Robux", Card: "Region Free", KinguinProductID: getEnv("PRODUCT_800_ROBUX", "107369"), PriceRUB: floatEnv("ROBUX_800_PRICE_RUB", 899)},
+		{Code: "2000", Label: "2000 Robux", Card: "Region Free", KinguinProductID: getEnv("PRODUCT_2000_ROBUX", "107371"), PriceRUB: floatEnv("ROBUX_2000_PRICE_RUB", 2199)},
 	}
 }
 
