@@ -13,18 +13,18 @@ import (
 )
 
 type PaymentHandler struct {
-	repo     *repositories.Repository
-	yookassa *payments.YooKassa
-	service  *services.ShopService
+	repo    *repositories.Repository
+	tbank   *payments.TBank
+	service *services.ShopService
 }
 
-func NewPaymentHandler(repo *repositories.Repository, yookassa *payments.YooKassa, service *services.ShopService) *PaymentHandler {
-	return &PaymentHandler{repo: repo, yookassa: yookassa, service: service}
+func NewPaymentHandler(repo *repositories.Repository, tbank *payments.TBank, service *services.ShopService) *PaymentHandler {
+	return &PaymentHandler{repo: repo, tbank: tbank, service: service}
 }
 
 func (h *PaymentHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /pay/success", h.success)
-	mux.HandleFunc("POST /pay/yookassa/webhook", h.yooKassaWebhook)
+	mux.HandleFunc("POST /pay/tbank/webhook", h.tbankWebhook)
 }
 
 func (h *PaymentHandler) success(w http.ResponseWriter, r *http.Request) {
@@ -38,13 +38,13 @@ func (h *PaymentHandler) success(w http.ResponseWriter, r *http.Request) {
 		h.render(w, "Заказ не найден", "Если деньги списались, напишите администратору.")
 		return
 	}
-	if order.PaymentID == "" || !h.yookassa.Enabled() {
+	if order.PaymentID == "" || !h.tbank.Enabled() {
 		h.render(w, "Проверяем оплату", "Вернитесь в бот. Если оплата прошла, код придет автоматически.")
 		return
 	}
-	payment, err := h.yookassa.Get(r.Context(), order.PaymentID)
+	payment, err := h.tbank.Get(r.Context(), order.PaymentID)
 	if err != nil {
-		log.Printf("get yookassa payment order=%d payment=%s: %v", order.ID, order.PaymentID, err)
+		log.Printf("get tbank payment order=%d payment=%s: %v", order.ID, order.PaymentID, err)
 		h.render(w, "Проверяем оплату", "Платежная система пока не вернула финальный статус. Код придет в бот после подтверждения оплаты.")
 		return
 	}
@@ -58,35 +58,30 @@ func (h *PaymentHandler) success(w http.ResponseWriter, r *http.Request) {
 	h.render(w, "Оплата еще не завершена", "Текущий статус: "+payment.Status+". Завершите платеж и вернитесь в бот.")
 }
 
-func (h *PaymentHandler) yooKassaWebhook(w http.ResponseWriter, r *http.Request) {
+func (h *PaymentHandler) tbankWebhook(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Event  string `json:"event"`
-		Object struct {
-			ID     string `json:"id"`
-			Status string `json:"status"`
-			Paid   bool   `json:"paid"`
-			Metadata struct {
-				OrderID string `json:"order_id"`
-			} `json:"metadata"`
-		} `json:"object"`
+		PaymentID string `json:"PaymentId"`
+		OrderID   string `json:"OrderId"`
+		Status    string `json:"Status"`
+		Success   bool   `json:"Success"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	if in.Object.ID == "" || in.Object.Metadata.OrderID == "" {
+	if in.PaymentID == "" || in.OrderID == "" {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	orderID, err := strconv.ParseInt(in.Object.Metadata.OrderID, 10, 64)
+	orderID, err := strconv.ParseInt(in.OrderID, 10, 64)
 	if err != nil {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	log.Printf("yookassa webhook event=%s order=%d payment=%s status=%s paid=%v", in.Event, orderID, in.Object.ID, in.Object.Status, in.Object.Paid)
-	if in.Object.Status == "succeeded" || in.Object.Paid {
-		if err := h.service.CompletePaidOrder(r.Context(), orderID, in.Object.ID); err != nil {
-			log.Printf("complete paid order=%d payment=%s: %v", orderID, in.Object.ID, err)
+	log.Printf("tbank webhook order=%d payment=%s status=%s success=%v", orderID, in.PaymentID, in.Status, in.Success)
+	if in.Success && (in.Status == "CONFIRMED" || in.Status == "AUTHORIZED") {
+		if err := h.service.CompletePaidOrder(r.Context(), orderID, in.PaymentID); err != nil {
+			log.Printf("complete paid order=%d payment=%s: %v", orderID, in.PaymentID, err)
 			http.Error(w, "temporary error", http.StatusInternalServerError)
 			return
 		}

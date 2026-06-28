@@ -34,9 +34,9 @@ type Config struct {
 	MarkupPercent        float64
 	FixedFeeRUB          float64
 	RoundToRUB           float64
-	YooKassaShopID       string
-	YooKassaSecretKey    string
-	YooKassaReceiptEmail string
+	TBankBaseURL         string
+	TBankTerminalKey     string
+	TBankPassword        string
 	Products             []Product
 }
 
@@ -60,9 +60,9 @@ func Load() Config {
 		MarkupPercent:        floatEnv("MARKUP_PERCENT", 20),
 		FixedFeeRUB:          floatEnv("FIXED_FEE_RUB", 0),
 		RoundToRUB:           floatEnv("ROUND_TO_RUB", 1),
-		YooKassaShopID:       os.Getenv("YOOKASSA_SHOP_ID"),
-		YooKassaSecretKey:    os.Getenv("YOOKASSA_SECRET_KEY"),
-		YooKassaReceiptEmail: getEnv("YOOKASSA_RECEIPT_EMAIL", ""),
+		TBankBaseURL:         getEnv("TBANK_BASE_URL", "https://securepay.tinkoff.ru"),
+		TBankTerminalKey:     os.Getenv("TBANK_TERMINAL_KEY"),
+		TBankPassword:        os.Getenv("TBANK_PASSWORD"),
 		Products:             loadProducts(),
 	}
 }

@@ -1,6 +1,6 @@
 # MAX Robux Gift Card Bot
 
-Go-сервер для MAX-бота, который продает Roblox Gift Cards через Kinguin и выдает код после успешной оплаты YooKassa.
+Go-сервер для MAX-бота, который продает Roblox Gift Cards через Kinguin и выдает код после успешной оплаты через T-Банк.
 
 ## Что умеет
 
@@ -8,7 +8,7 @@ Go-сервер для MAX-бота, который продает Roblox Gift C
 - Кнопки номиналов: 400, 800, 2000, 4500 Robux.
 - Проверка наличия и цены товара в Kinguin.
 - Расчет цены в рублях с курсом и наценкой.
-- Создание платежной ссылки YooKassa.
+- Создание платежной ссылки T-Банка.
 - Webhook успешной оплаты.
 - Автоматический выкуп кода в Kinguin.
 - Отправка кода пользователю в MAX.
@@ -29,7 +29,7 @@ cp .env.example .env
 - `PUBLIC_BASE_URL` - публичный HTTPS-адрес сервера.
 - `KINGUIN_API_KEY` - API-ключ Kinguin.
 - `PRODUCT_400_ROBUX`, `PRODUCT_800_ROBUX`, `PRODUCT_2000_ROBUX`, `PRODUCT_4500_ROBUX` - ID товаров Kinguin.
-- `YOOKASSA_SHOP_ID`, `YOOKASSA_SECRET_KEY` - платежные доступы.
+- `TBANK_TERMINAL_KEY`, `TBANK_PASSWORD` - платежные доступы T-Банка.
 - `ADMIN_PLATFORM_IDS` - ID админов через запятую.
 
 Токены не нужно хранить в git. Если токен MAX уже был отправлен в переписке, лучше перевыпустить его в кабинете.
@@ -54,10 +54,10 @@ go run ./cmd/bot
 POST {PUBLIC_BASE_URL}/webhook/max
 ```
 
-YooKassa webhook:
+T-Банк webhook:
 
 ```text
-POST {PUBLIC_BASE_URL}/pay/yookassa/webhook
+POST {PUBLIC_BASE_URL}/pay/tbank/webhook
 ```
 
 Return URL для платежей:

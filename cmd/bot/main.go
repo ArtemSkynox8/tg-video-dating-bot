@@ -38,14 +38,14 @@ func main() {
 	repo := repositories.New(pool)
 	maxClient := maxapi.NewClient(cfg.MaxAPIBaseURL, cfg.MaxBotToken)
 	kinguinClient := kinguin.NewClient(cfg)
-	yooKassa := payments.NewYooKassa(cfg)
-	shop := services.NewShopService(cfg, repo, maxClient, kinguinClient, yooKassa)
+	tbank := payments.NewTBank(cfg)
+	shop := services.NewShopService(cfg, repo, maxClient, kinguinClient, tbank)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", ok)
 	mux.HandleFunc("GET /healthz", ok)
 	mux.Handle("POST /webhook/max", handlers.NewWebhookHandler(cfg, shop))
-	handlers.NewPaymentHandler(repo, yooKassa, shop).Register(mux)
+	handlers.NewPaymentHandler(repo, tbank, shop).Register(mux)
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,

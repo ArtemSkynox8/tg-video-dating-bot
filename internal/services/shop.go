@@ -20,11 +20,11 @@ type ShopService struct {
 	repo    *repositories.Repository
 	max     *maxapi.Client
 	kinguin *kinguin.Client
-	yookassa *payments.YooKassa
+	tbank   *payments.TBank
 }
 
-func NewShopService(cfg config.Config, repo *repositories.Repository, max *maxapi.Client, kinguinClient *kinguin.Client, yookassa *payments.YooKassa) *ShopService {
-	return &ShopService{cfg: cfg, repo: repo, max: max, kinguin: kinguinClient, yookassa: yookassa}
+func NewShopService(cfg config.Config, repo *repositories.Repository, max *maxapi.Client, kinguinClient *kinguin.Client, tbank *payments.TBank) *ShopService {
+	return &ShopService{cfg: cfg, repo: repo, max: max, kinguin: kinguinClient, tbank: tbank}
 }
 
 func (s *ShopService) HandleMessage(ctx context.Context, msg maxapi.MessageUpdate) error {
@@ -149,15 +149,15 @@ func (s *ShopService) createOrder(ctx context.Context, user *models.User, code s
 		SourceCurrency:   "RUB",
 		OrderSum:         orderSum,
 		Status:           models.OrderStatusCreated,
-		PaymentProvider:  "yookassa",
+		PaymentProvider:  "tbank",
 	})
 	if err != nil {
 		return err
 	}
-	if !s.yookassa.Enabled() {
-		return s.max.SendText(ctx, user.PlatformChatID, fmt.Sprintf("Заказ #%d создан на сумму %.0f руб., но YooKassa еще не настроена на сервере.", order.ID, orderSum), nil)
+	if !s.tbank.Enabled() {
+		return s.max.SendText(ctx, user.PlatformChatID, fmt.Sprintf("Заказ #%d создан на сумму %.0f руб., но T-Банк еще не настроен на сервере.", order.ID, orderSum), nil)
 	}
-	payment, err := s.yookassa.Create(ctx, order.ID, orderSum, "Roblox Gift Card "+product.Label)
+	payment, err := s.tbank.Create(ctx, order.ID, orderSum, "Roblox Gift Card "+product.Label)
 	if err != nil {
 		_ = s.repo.MarkOrderError(ctx, order.ID, models.OrderStatusError, err.Error())
 		return s.max.SendText(ctx, user.PlatformChatID, "Не удалось создать платеж. Попробуйте позже.", nil)
