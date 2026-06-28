@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"log"
 	"math"
 	"strconv"
 	"strings"
@@ -145,12 +146,14 @@ func (s *ShopService) createOrder(ctx context.Context, user *models.User, code s
 	}
 	quote, err := s.kinguin.PriceAndStock(ctx, productID)
 	if err != nil {
+		log.Printf("kinguin price check failed product=%s nominal=%s: %v", productID, product.Code, err)
 		return s.max.SendText(ctx, user.PlatformChatID, "Не удалось проверить актуальную цену. Попробуйте позже.", nil)
 	}
 	if quote.Qty <= 0 {
 		return s.max.SendText(ctx, user.PlatformChatID, "Товар временно закончился.", nil)
 	}
 	if quote.Price <= 0 {
+		log.Printf("kinguin price check returned empty price product=%s nominal=%s currency=%s qty=%d", productID, product.Code, quote.Currency, quote.Qty)
 		return s.max.SendText(ctx, user.PlatformChatID, "Не удалось получить цену товара. Попробуйте позже.", nil)
 	}
 	orderSum := s.calculateRUB(quote.Price, quote.Currency)

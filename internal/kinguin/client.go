@@ -46,11 +46,30 @@ func (c *Client) Product(ctx context.Context, productID string) (models.ProductQ
 }
 
 func (c *Client) PriceAndStock(ctx context.Context, productID string) (models.ProductQuote, error) {
-	path := productPath(c.cfg.KinguinPricePath, productID)
-	var raw map[string]any
-	if err := c.request(ctx, http.MethodGet, path, nil, &raw); err != nil {
-		return models.ProductQuote{}, err
+	paths := []string{
+		productPath(c.cfg.KinguinPricePath, productID),
+		productPath("/esa/api/v2/products/{id}/price", productID),
 	}
+	var lastErr error
+	for _, path := range uniqueStrings(paths) {
+		var raw map[string]any
+		if err := c.request(ctx, http.MethodGet, path, nil, &raw); err != nil {
+			lastErr = err
+			continue
+		}
+		return quoteFromRaw(productID, raw), nil
+	}
+	quote, err := c.Product(ctx, productID)
+	if err == nil {
+		return quote, nil
+	}
+	if lastErr != nil {
+		return models.ProductQuote{}, lastErr
+	}
+	return models.ProductQuote{}, err
+}
+
+func quoteFromRaw(productID string, raw map[string]any) models.ProductQuote {
 	offer := firstMapFromArray(firstNonNil(raw["offers"], raw["data"], raw["items"]))
 	price := firstFloat(raw["price"], raw["priceEur"], raw["priceUsd"], raw["amount"], raw["minPrice"], raw["lowestPrice"], raw["cheapestOffer"], offer["price"], offer["amount"])
 	currency := firstString(raw["currency"], raw["priceCurrency"], raw["curr"], offer["currency"], "EUR")
@@ -61,7 +80,7 @@ func (c *Client) PriceAndStock(ctx context.Context, productID string) (models.Pr
 		Price:     price,
 		Currency:  currency,
 		Qty:       qty,
-	}, nil
+	}
 }
 
 func (c *Client) CreateOrder(ctx context.Context, productID string, clientOrderID string) (OrderResult, error) {
@@ -126,6 +145,19 @@ func productPath(template, productID string) string {
 	default:
 		return strings.TrimRight(template, "/") + "/" + escapedID + "/price"
 	}
+}
+
+func uniqueStrings(values []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
 }
 
 func findCode(value any) string {
