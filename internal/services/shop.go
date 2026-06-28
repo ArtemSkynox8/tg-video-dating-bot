@@ -126,9 +126,9 @@ func (s *ShopService) sendStart(ctx context.Context, chatID string) error {
 func (s *ShopService) sendNominals(ctx context.Context, chatID string) error {
 	rows := [][]maxapi.Button{}
 	for _, product := range s.cfg.Products {
-		rows = append(rows, []maxapi.Button{{Text: fmt.Sprintf("%s - %.0f руб.", product.Label, product.PriceRUB), Payload: "nominal:" + product.Code}})
+		rows = append(rows, []maxapi.Button{{Text: product.Label, Payload: "nominal:" + product.Code}})
 	}
-	return s.max.SendText(ctx, chatID, "Выберите номинал:", rows)
+	return s.max.SendText(ctx, chatID, "Выберите номинал: точную цену посчитаем перед оплатой.", rows)
 }
 
 func (s *ShopService) createOrder(ctx context.Context, user *models.User, code string) error {
@@ -136,18 +136,31 @@ func (s *ShopService) createOrder(ctx context.Context, user *models.User, code s
 	if !ok {
 		return s.max.SendText(ctx, user.PlatformChatID, "Этот номинал пока не настроен.", nil)
 	}
-	orderSum := product.PriceRUB
 	productID := product.KinguinProductID
 	if productID == "" {
-		productID = "stub-" + product.Code
+		return s.max.SendText(ctx, user.PlatformChatID, "Этот номинал пока не подключен к Kinguin.", nil)
 	}
+	if s.cfg.KinguinAPIKey == "" {
+		return s.max.SendText(ctx, user.PlatformChatID, "Проверка цены Kinguin пока не настроена.", nil)
+	}
+	quote, err := s.kinguin.PriceAndStock(ctx, productID)
+	if err != nil {
+		return s.max.SendText(ctx, user.PlatformChatID, "Не удалось проверить актуальную цену. Попробуйте позже.", nil)
+	}
+	if quote.Qty <= 0 {
+		return s.max.SendText(ctx, user.PlatformChatID, "Товар временно закончился.", nil)
+	}
+	if quote.Price <= 0 {
+		return s.max.SendText(ctx, user.PlatformChatID, "Не удалось получить цену товара. Попробуйте позже.", nil)
+	}
+	orderSum := s.calculateRUB(quote.Price, quote.Currency)
 	order, err := s.repo.CreateOrder(ctx, models.Order{
 		UserID:           user.ID,
 		NominalCode:      product.Code,
 		ProductLabel:     product.Label,
 		KinguinProductID: productID,
-		SourcePrice:      orderSum,
-		SourceCurrency:   "RUB",
+		SourcePrice:      quote.Price,
+		SourceCurrency:   strings.ToUpper(quote.Currency),
 		OrderSum:         orderSum,
 		Status:           models.OrderStatusCreated,
 		PaymentProvider:  "tbank",
@@ -179,7 +192,10 @@ func (s *ShopService) calculateRUB(price float64, currency string) float64 {
 	case "RUB":
 		rate = 1
 	}
-	sum := price*rate*(1+s.cfg.MarkupPercent/100) + s.cfg.FixedFeeRUB
+	sum := price*rate + s.cfg.FixedFeeRUB + s.cfg.DynamicMarginRUB
+	if s.cfg.AcquiringFeePercent > 0 && s.cfg.AcquiringFeePercent < 100 {
+		sum = sum / (1 - s.cfg.AcquiringFeePercent/100)
+	}
 	step := math.Max(1, s.cfg.RoundToRUB)
 	return math.Ceil(sum/step) * step
 }

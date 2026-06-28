@@ -45,6 +45,25 @@ func (c *Client) Product(ctx context.Context, productID string) (models.ProductQ
 	}, nil
 }
 
+func (c *Client) PriceAndStock(ctx context.Context, productID string) (models.ProductQuote, error) {
+	path := productPath(c.cfg.KinguinPricePath, productID)
+	var raw map[string]any
+	if err := c.request(ctx, http.MethodGet, path, nil, &raw); err != nil {
+		return models.ProductQuote{}, err
+	}
+	offer := firstMapFromArray(firstNonNil(raw["offers"], raw["data"], raw["items"]))
+	price := firstFloat(raw["price"], raw["priceEur"], raw["priceUsd"], raw["amount"], raw["minPrice"], raw["lowestPrice"], raw["cheapestOffer"], offer["price"], offer["amount"])
+	currency := firstString(raw["currency"], raw["priceCurrency"], raw["curr"], offer["currency"], "EUR")
+	qty := int(firstFloat(raw["qty"], raw["quantity"], raw["stock"], raw["availableQty"], raw["available"], raw["inStock"], offer["qty"], offer["quantity"], offer["stock"]))
+	return models.ProductQuote{
+		ProductID: productID,
+		Name:      firstString(raw["name"], raw["title"]),
+		Price:     price,
+		Currency:  currency,
+		Qty:       qty,
+	}, nil
+}
+
 func (c *Client) CreateOrder(ctx context.Context, productID string, clientOrderID string) (OrderResult, error) {
 	body := map[string]any{
 		"products": []map[string]any{{
@@ -97,6 +116,18 @@ func (c *Client) request(ctx context.Context, method, path string, in any, out a
 	return json.Unmarshal(detail, out)
 }
 
+func productPath(template, productID string) string {
+	escapedID := url.PathEscape(productID)
+	switch {
+	case strings.Contains(template, "{id}"):
+		return strings.ReplaceAll(template, "{id}", escapedID)
+	case strings.Contains(template, "%s"):
+		return fmt.Sprintf(template, escapedID)
+	default:
+		return strings.TrimRight(template, "/") + "/" + escapedID + "/price"
+	}
+}
+
 func findCode(value any) string {
 	switch v := value.(type) {
 	case map[string]any:
@@ -121,6 +152,9 @@ func findCode(value any) string {
 }
 
 func firstMapFromArray(value any) map[string]any {
+	if item, ok := value.(map[string]any); ok {
+		return item
+	}
 	items, ok := value.([]any)
 	if !ok || len(items) == 0 {
 		return map[string]any{}
@@ -130,6 +164,15 @@ func firstMapFromArray(value any) map[string]any {
 		return map[string]any{}
 	}
 	return item
+}
+
+func firstNonNil(values ...any) any {
+	for _, value := range values {
+		if value != nil {
+			return value
+		}
+	}
+	return nil
 }
 
 func firstString(values ...any) string {
@@ -155,6 +198,11 @@ func firstFloat(values ...any) float64 {
 			return v
 		case int:
 			return float64(v)
+		case bool:
+			if v {
+				return 1
+			}
+			return 0
 		case string:
 			var out float64
 			if _, err := fmt.Sscan(v, &out); err == nil {

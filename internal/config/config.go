@@ -28,11 +28,14 @@ type Config struct {
 	KinguinAPIKey        string
 	KinguinAuthHeader    string
 	KinguinProductsPath  string
+	KinguinPricePath     string
 	KinguinOrdersPath    string
 	USDRUBRate           float64
 	EURRUBRate           float64
 	MarkupPercent        float64
 	FixedFeeRUB          float64
+	DynamicMarginRUB     float64
+	AcquiringFeePercent  float64
 	RoundToRUB           float64
 	TBankBaseURL         string
 	TBankTerminalKey     string
@@ -57,11 +60,14 @@ func Load() Config {
 		KinguinAPIKey:        os.Getenv("KINGUIN_API_KEY"),
 		KinguinAuthHeader:    getEnv("KINGUIN_AUTH_HEADER", "X-Api-Key"),
 		KinguinProductsPath:  getEnv("KINGUIN_PRODUCTS_PATH", "/esa/api/v2/products"),
+		KinguinPricePath:     getEnv("KINGUIN_PRICE_PATH", "/v2/products/{id}/price"),
 		KinguinOrdersPath:    getEnv("KINGUIN_ORDERS_PATH", "/esa/api/v2/orders"),
 		USDRUBRate:           floatEnv("USD_RUB_RATE", 90),
 		EURRUBRate:           floatEnv("EUR_RUB_RATE", 100),
-		MarkupPercent:        floatEnv("MARKUP_PERCENT", 20),
+		MarkupPercent:        floatEnv("MARKUP_PERCENT", 0),
 		FixedFeeRUB:          floatEnv("FIXED_FEE_RUB", 0),
+		DynamicMarginRUB:     floatEnv("DYNAMIC_MARGIN_RUB", 200),
+		AcquiringFeePercent:  floatEnv("ACQUIRING_FEE_PERCENT", 5),
 		RoundToRUB:           floatEnv("ROUND_TO_RUB", 1),
 		TBankBaseURL:         getEnv("TBANK_BASE_URL", "https://securepay.tinkoff.ru"),
 		TBankTerminalKey:     os.Getenv("TBANK_TERMINAL_KEY"),
