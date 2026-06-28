@@ -137,23 +137,24 @@ func (s *ShopService) createOrder(ctx context.Context, user *models.User, code s
 	if !ok {
 		return s.max.SendText(ctx, user.PlatformChatID, "Этот номинал пока не настроен.", nil)
 	}
-	productID := product.KinguinProductID
-	if !validKinguinProductID(productID) {
+	retailID := product.KinguinRetailID
+	if !validKinguinProductID(retailID) {
 		return s.max.SendText(ctx, user.PlatformChatID, "Этот номинал пока не подключен к Kinguin.", nil)
 	}
 	if s.cfg.KinguinAPIKey == "" {
 		return s.max.SendText(ctx, user.PlatformChatID, "Проверка цены Kinguin пока не настроена.", nil)
 	}
-	quote, err := s.kinguin.PriceAndStock(ctx, productID)
+	quote, err := s.kinguin.ResolveRetailProduct(ctx, retailID)
 	if err != nil {
-		log.Printf("kinguin price check failed product=%s nominal=%s: %v", productID, product.Code, err)
+		log.Printf("kinguin retail lookup failed retail=%s nominal=%s: %v", retailID, product.Code, err)
 		return s.max.SendText(ctx, user.PlatformChatID, "Не удалось проверить актуальную цену. Попробуйте позже.", nil)
 	}
+	productID := quote.ProductID
 	if quote.Qty <= 0 {
 		return s.max.SendText(ctx, user.PlatformChatID, "Товар временно закончился.", nil)
 	}
 	if quote.Price <= 0 {
-		log.Printf("kinguin price check returned empty price product=%s nominal=%s currency=%s qty=%d", productID, product.Code, quote.Currency, quote.Qty)
+		log.Printf("kinguin retail lookup returned empty price retail=%s product=%s nominal=%s currency=%s qty=%d", retailID, productID, product.Code, quote.Currency, quote.Qty)
 		return s.max.SendText(ctx, user.PlatformChatID, "Не удалось получить цену товара. Попробуйте позже.", nil)
 	}
 	orderSum := s.calculateRUB(quote.Price, quote.Currency)

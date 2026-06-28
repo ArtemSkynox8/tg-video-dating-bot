@@ -11,7 +11,7 @@ type Product struct {
 	Code             string
 	Label            string
 	Card             string
-	KinguinProductID string
+	KinguinRetailID  string
 	PriceRUB         float64
 }
 
@@ -81,10 +81,10 @@ func Load() Config {
 
 func loadProducts() []Product {
 	return []Product{
-		{Code: "400", Label: "400 Robux", Card: "Region Free", KinguinProductID: getEnv("PRODUCT_400_ROBUX", "107368"), PriceRUB: floatEnv("ROBUX_400_PRICE_RUB", 499)},
-		{Code: "700", Label: "700 Robux", Card: "Region Free", KinguinProductID: getEnv("PRODUCT_700_ROBUX", "357198"), PriceRUB: floatEnv("ROBUX_700_PRICE_RUB", 799)},
-		{Code: "800", Label: "800 Robux", Card: "Region Free", KinguinProductID: getEnv("PRODUCT_800_ROBUX", "107369"), PriceRUB: floatEnv("ROBUX_800_PRICE_RUB", 899)},
-		{Code: "2000", Label: "2000 Robux", Card: "Region Free", KinguinProductID: getEnv("PRODUCT_2000_ROBUX", "107371"), PriceRUB: floatEnv("ROBUX_2000_PRICE_RUB", 2199)},
+		{Code: "400", Label: "400 Robux", Card: "Region Free", KinguinRetailID: firstNonEmptyEnv("ROBLOX_400_KINGUIN_ID", "PRODUCT_400_ROBUX", "107368"), PriceRUB: floatEnv("ROBUX_400_PRICE_RUB", 499)},
+		{Code: "700", Label: "700 Robux", Card: "Region Free", KinguinRetailID: firstNonEmptyEnv("ROBLOX_700_KINGUIN_ID", "PRODUCT_700_ROBUX", "357198"), PriceRUB: floatEnv("ROBUX_700_PRICE_RUB", 799)},
+		{Code: "800", Label: "800 Robux", Card: "Region Free", KinguinRetailID: firstNonEmptyEnv("ROBLOX_800_KINGUIN_ID", "PRODUCT_800_ROBUX", "107369"), PriceRUB: floatEnv("ROBUX_800_PRICE_RUB", 899)},
+		{Code: "2000", Label: "2000 Robux", Card: "Region Free", KinguinRetailID: firstNonEmptyEnv("ROBLOX_2000_KINGUIN_ID", "PRODUCT_2000_ROBUX", "107371"), PriceRUB: floatEnv("ROBUX_2000_PRICE_RUB", 2199)},
 	}
 }
 
@@ -112,6 +112,19 @@ func getEnv(key, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func firstNonEmptyEnv(keysAndFallback ...string) string {
+	if len(keysAndFallback) == 0 {
+		return ""
+	}
+	fallback := keysAndFallback[len(keysAndFallback)-1]
+	for _, key := range keysAndFallback[:len(keysAndFallback)-1] {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			return value
+		}
+	}
+	return fallback
 }
 
 func normalizeKinguinBaseURL(value string) string {

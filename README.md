@@ -28,7 +28,7 @@ cp .env.example .env
 - `MAX_WEBHOOK_SECRET` - секрет webhook.
 - `PUBLIC_BASE_URL` - публичный HTTPS-адрес сервера.
 - `KINGUIN_API_KEY` - API-ключ Kinguin.
-- `PRODUCT_400_ROBUX`, `PRODUCT_700_ROBUX`, `PRODUCT_800_ROBUX`, `PRODUCT_2000_ROBUX` - ID товаров Kinguin.
+- `ROBLOX_400_KINGUIN_ID`, `ROBLOX_700_KINGUIN_ID`, `ROBLOX_800_KINGUIN_ID`, `ROBLOX_2000_KINGUIN_ID` - розничные `kinguinId`; бот сам найдет API Product ID в каталоге Kinguin.
 - `TBANK_TERMINAL_KEY`, `TBANK_PASSWORD` - платежные доступы T-Банка.
 - `ADMIN_PLATFORM_IDS` - ID админов через запятую.
 

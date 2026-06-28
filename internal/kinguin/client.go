@@ -33,6 +33,24 @@ func (c *Client) Product(ctx context.Context, productID string) (models.ProductQ
 	return c.productAtPath(ctx, strings.TrimRight(c.cfg.KinguinProductsPath, "/")+"/"+url.PathEscape(productID), productID)
 }
 
+func (c *Client) ResolveRetailProduct(ctx context.Context, retailID string) (models.ProductQuote, error) {
+	paths := []string{
+		strings.TrimRight(c.cfg.KinguinProductsPath, "/") + "?kinguinId=" + url.QueryEscape(retailID),
+		strings.TrimRight(c.cfg.KinguinProductsPath, "/") + "?kinguin_id=" + url.QueryEscape(retailID),
+		strings.TrimRight(c.cfg.KinguinProductsPath, "/") + "?q=" + url.QueryEscape(retailID),
+	}
+	errors := []string{}
+	for _, path := range uniqueStrings(paths) {
+		quote, err := c.firstProductFromCatalog(ctx, path, retailID)
+		if err != nil {
+			errors = append(errors, err.Error())
+			continue
+		}
+		return quote, nil
+	}
+	return models.ProductQuote{}, fmt.Errorf("kinguin retail product lookup failed: %s", strings.Join(errors, " | "))
+}
+
 func (c *Client) PriceAndStock(ctx context.Context, productID string) (models.ProductQuote, error) {
 	productPaths := []string{
 		strings.TrimRight(c.cfg.KinguinProductsPath, "/") + "/" + url.PathEscape(productID),
@@ -66,12 +84,51 @@ func (c *Client) PriceAndStock(ctx context.Context, productID string) (models.Pr
 	return models.ProductQuote{}, fmt.Errorf("kinguin price and product checks failed: %s", strings.Join(errors, " | "))
 }
 
+func (c *Client) firstProductFromCatalog(ctx context.Context, path, retailID string) (models.ProductQuote, error) {
+	var raw any
+	if err := c.request(ctx, http.MethodGet, path, nil, &raw); err != nil {
+		return models.ProductQuote{}, err
+	}
+	for _, product := range productMaps(raw) {
+		if retailID != "" && firstString(product["kinguinId"], product["kinguin_id"], product["kinguinID"]) != retailID {
+			continue
+		}
+		quote := quoteFromRaw("", product)
+		if quote.ProductID != "" {
+			return quote, nil
+		}
+	}
+	return models.ProductQuote{}, fmt.Errorf("kinguin catalog lookup returned no product for retail id %s", retailID)
+}
+
 func (c *Client) productAtPath(ctx context.Context, path, productID string) (models.ProductQuote, error) {
 	var raw map[string]any
 	if err := c.request(ctx, http.MethodGet, path, nil, &raw); err != nil {
 		return models.ProductQuote{}, err
 	}
 	return quoteFromRaw(productID, raw), nil
+}
+
+func productMaps(value any) []map[string]any {
+	switch v := value.(type) {
+	case []any:
+		out := make([]map[string]any, 0, len(v))
+		for _, item := range v {
+			if mapped, ok := item.(map[string]any); ok {
+				out = append(out, mapped)
+			}
+		}
+		return out
+	case map[string]any:
+		for _, key := range []string{"data", "results", "items", "products"} {
+			if items := productMaps(v[key]); len(items) > 0 {
+				return items
+			}
+		}
+		return []map[string]any{v}
+	default:
+		return nil
+	}
 }
 
 func quoteFromRaw(productID string, raw map[string]any) models.ProductQuote {
