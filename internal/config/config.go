@@ -56,7 +56,7 @@ func Load() Config {
 		MaxWebhookSecret:     os.Getenv("MAX_WEBHOOK_SECRET"),
 		DatabaseURL:          getEnv("DATABASE_URL", "postgres://robux:robux@localhost:5432/robux?sslmode=disable"),
 		AdminPlatformIDs:     splitCSV(os.Getenv("ADMIN_PLATFORM_IDS")),
-		KinguinBaseURL:       getEnv("KINGUIN_BASE_URL", "https://kinguin.net"),
+		KinguinBaseURL:       normalizeKinguinBaseURL(getEnv("KINGUIN_BASE_URL", "https://gateway.kinguin.net")),
 		KinguinAPIKey:        os.Getenv("KINGUIN_API_KEY"),
 		KinguinAuthHeader:    getEnv("KINGUIN_AUTH_HEADER", "X-Api-Key"),
 		KinguinProductsPath:  getEnv("KINGUIN_PRODUCTS_PATH", "/esa/api/v2/products"),
@@ -112,6 +112,16 @@ func getEnv(key, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func normalizeKinguinBaseURL(value string) string {
+	value = strings.TrimRight(strings.TrimSpace(value), "/")
+	switch value {
+	case "https://kinguin.net", "https://www.kinguin.net", "http://kinguin.net", "http://www.kinguin.net":
+		return "https://gateway.kinguin.net"
+	default:
+		return value
+	}
 }
 
 func floatEnv(key string, fallback float64) float64 {

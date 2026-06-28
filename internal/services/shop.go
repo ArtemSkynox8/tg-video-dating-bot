@@ -138,7 +138,7 @@ func (s *ShopService) createOrder(ctx context.Context, user *models.User, code s
 		return s.max.SendText(ctx, user.PlatformChatID, "Этот номинал пока не настроен.", nil)
 	}
 	productID := product.KinguinProductID
-	if productID == "" {
+	if !validKinguinProductID(productID) {
 		return s.max.SendText(ctx, user.PlatformChatID, "Этот номинал пока не подключен к Kinguin.", nil)
 	}
 	if s.cfg.KinguinAPIKey == "" {
@@ -241,6 +241,20 @@ func (s *ShopService) productByCode(code string) (config.Product, bool) {
 		}
 	}
 	return config.Product{}, false
+}
+
+func validKinguinProductID(productID string) bool {
+	productID = strings.TrimSpace(strings.ToLower(productID))
+	if productID == "" {
+		return false
+	}
+	invalidParts := []string{"replace", "id_товара", "product-id", "kinguin-product-id"}
+	for _, part := range invalidParts {
+		if strings.Contains(productID, part) {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *ShopService) isAdmin(userID string) bool {
