@@ -131,8 +131,13 @@ func productMaps(value any) []map[string]any {
 		}
 		return out
 	case map[string]any:
-		for _, key := range []string{"data", "results", "items", "products"} {
+		for _, key := range []string{"data", "results", "items", "products", "_embedded"} {
 			if items := productMaps(v[key]); len(items) > 0 {
+				return items
+			}
+		}
+		for _, value := range v {
+			if items := productMaps(value); len(items) > 0 {
 				return items
 			}
 		}
