@@ -181,7 +181,7 @@ func (s *ShopService) createOrder(ctx context.Context, user *models.User, code s
 	}
 	return s.max.SendText(ctx, user.PlatformChatID,
 		fmt.Sprintf("Счет на оплату: %s\nСумма к оплате: %.0f руб.\n\nПосле оплаты мы проверим заказ и выдадим код.", product.Label, orderSum),
-		[][]maxapi.Button{{{Text: "Оплатить", URL: payment.URL}}})
+		[][]maxapi.Button{{{Text: fmt.Sprintf("Оплатить %.0f руб.", orderSum), URL: payment.URL}}})
 }
 
 func (s *ShopService) calculateRUB(price float64, currency string) float64 {
@@ -196,8 +196,16 @@ func (s *ShopService) calculateRUB(price float64, currency string) float64 {
 	if s.cfg.AcquiringFeePercent > 0 && s.cfg.AcquiringFeePercent < 100 {
 		sum = sum / (1 - s.cfg.AcquiringFeePercent/100)
 	}
-	step := math.Max(1, s.cfg.RoundToRUB)
-	return math.Ceil(sum/step) * step
+	return roundUpToNine(sum)
+}
+
+func roundUpToNine(sum float64) float64 {
+	rounded := int64(math.Ceil(sum))
+	remainder := rounded % 10
+	if remainder <= 9 {
+		return float64(rounded + (9 - remainder))
+	}
+	return float64(rounded)
 }
 
 func (s *ShopService) sendStats(ctx context.Context, chatID string) error {
