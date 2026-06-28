@@ -30,52 +30,58 @@ func NewClient(cfg config.Config) *Client {
 }
 
 func (c *Client) Product(ctx context.Context, productID string) (models.ProductQuote, error) {
-	path := strings.TrimRight(c.cfg.KinguinProductsPath, "/") + "/" + url.PathEscape(productID)
-	var raw map[string]any
-	if err := c.request(ctx, http.MethodGet, path, nil, &raw); err != nil {
-		return models.ProductQuote{}, err
-	}
-	offer := firstMapFromArray(raw["offers"])
-	return models.ProductQuote{
-		ProductID: firstString(raw["id"], raw["productId"], productID),
-		Name:     firstString(raw["name"], raw["title"]),
-		Price:    firstFloat(raw["price"], raw["priceEur"], raw["cheapestOffer"], raw["originalPrice"], offer["price"]),
-		Currency: firstString(raw["currency"], raw["priceCurrency"], offer["currency"], "USD"),
-		Qty:      int(firstFloat(raw["qty"], raw["quantity"], raw["stock"], raw["availableQty"], offer["qty"], offer["quantity"])),
-	}, nil
+	return c.productAtPath(ctx, strings.TrimRight(c.cfg.KinguinProductsPath, "/")+"/"+url.PathEscape(productID), productID)
 }
 
 func (c *Client) PriceAndStock(ctx context.Context, productID string) (models.ProductQuote, error) {
-	paths := []string{
+	productPaths := []string{
+		strings.TrimRight(c.cfg.KinguinProductsPath, "/") + "/" + url.PathEscape(productID),
+		"/esa/api/v2/products/" + url.PathEscape(productID),
+	}
+	errors := []string{}
+	for _, path := range uniqueStrings(productPaths) {
+		quote, err := c.productAtPath(ctx, path, productID)
+		if err != nil {
+			errors = append(errors, err.Error())
+			continue
+		}
+		return quote, nil
+	}
+
+	pricePaths := []string{
 		productPath(c.cfg.KinguinPricePath, productID),
 		productPath("/esa/api/v2/products/{id}/price", productID),
 	}
-	var lastErr error
-	for _, path := range uniqueStrings(paths) {
+	for _, path := range uniqueStrings(pricePaths) {
+		if path == "" {
+			continue
+		}
 		var raw map[string]any
 		if err := c.request(ctx, http.MethodGet, path, nil, &raw); err != nil {
-			lastErr = err
+			errors = append(errors, err.Error())
 			continue
 		}
 		return quoteFromRaw(productID, raw), nil
 	}
-	quote, err := c.Product(ctx, productID)
-	if err == nil {
-		return quote, nil
+	return models.ProductQuote{}, fmt.Errorf("kinguin price and product checks failed: %s", strings.Join(errors, " | "))
+}
+
+func (c *Client) productAtPath(ctx context.Context, path, productID string) (models.ProductQuote, error) {
+	var raw map[string]any
+	if err := c.request(ctx, http.MethodGet, path, nil, &raw); err != nil {
+		return models.ProductQuote{}, err
 	}
-	if lastErr != nil {
-		return models.ProductQuote{}, lastErr
-	}
-	return models.ProductQuote{}, err
+	return quoteFromRaw(productID, raw), nil
 }
 
 func quoteFromRaw(productID string, raw map[string]any) models.ProductQuote {
 	offer := firstMapFromArray(firstNonNil(raw["offers"], raw["data"], raw["items"]))
-	price := firstFloat(raw["price"], raw["priceEur"], raw["priceUsd"], raw["amount"], raw["minPrice"], raw["lowestPrice"], raw["cheapestOffer"], offer["price"], offer["amount"])
-	currency := firstString(raw["currency"], raw["priceCurrency"], raw["curr"], offer["currency"], "EUR")
+	priceMap := firstMapFromArray(raw["price"])
+	price := firstFloat(raw["price"], raw["priceEur"], raw["priceUsd"], raw["amount"], raw["minPrice"], raw["lowestPrice"], raw["cheapestOffer"], priceMap["amount"], priceMap["value"], priceMap["price"], offer["price"], offer["amount"])
+	currency := firstString(raw["currency"], raw["priceCurrency"], raw["curr"], priceMap["currency"], offer["currency"], "EUR")
 	qty := int(firstFloat(raw["qty"], raw["quantity"], raw["stock"], raw["availableQty"], raw["available"], raw["inStock"], offer["qty"], offer["quantity"], offer["stock"]))
 	return models.ProductQuote{
-		ProductID: productID,
+		ProductID: firstString(raw["id"], raw["productId"], productID),
 		Name:      firstString(raw["name"], raw["title"]),
 		Price:     price,
 		Currency:  currency,
@@ -136,6 +142,9 @@ func (c *Client) request(ctx context.Context, method, path string, in any, out a
 }
 
 func productPath(template, productID string) string {
+	if strings.TrimSpace(template) == "" {
+		return ""
+	}
 	escapedID := url.PathEscape(productID)
 	switch {
 	case strings.Contains(template, "{id}"):
