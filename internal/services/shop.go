@@ -13,6 +13,7 @@ import (
 	"github.com/ArtemSkynox8/tg-video-dating-bot/internal/models"
 	"github.com/ArtemSkynox8/tg-video-dating-bot/internal/payments"
 	"github.com/ArtemSkynox8/tg-video-dating-bot/internal/repositories"
+	"github.com/ArtemSkynox8/tg-video-dating-bot/internal/version"
 )
 
 type ShopService struct {
@@ -117,7 +118,7 @@ func (s *ShopService) CompletePaidOrder(ctx context.Context, orderID int64, paym
 }
 
 func (s *ShopService) sendStart(ctx context.Context, chatID string) error {
-	return s.max.SendText(ctx, chatID, "Привет! Здесь можно купить Roblox Gift Card и получить код сразу после оплаты.", [][]maxapi.Button{
+	return s.max.SendText(ctx, chatID, "Привет! Здесь можно купить Roblox Gift Card и получить код сразу после оплаты.\n\nbuild: "+version.Build, [][]maxapi.Button{
 		{{Text: "Купить Робаксы", Payload: "buy"}},
 	})
 }

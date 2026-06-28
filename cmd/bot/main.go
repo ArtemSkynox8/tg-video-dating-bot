@@ -18,10 +18,12 @@ import (
 	"github.com/ArtemSkynox8/tg-video-dating-bot/internal/payments"
 	"github.com/ArtemSkynox8/tg-video-dating-bot/internal/repositories"
 	"github.com/ArtemSkynox8/tg-video-dating-bot/internal/services"
+	"github.com/ArtemSkynox8/tg-video-dating-bot/internal/version"
 )
 
 func main() {
 	cfg := config.Load()
+	log.Printf("robux bot build=%s tbank_enabled=%t public_base_url=%s", version.Build, cfg.TBankTerminalKey != "" && cfg.TBankPassword != "", cfg.PublicBaseURL)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -83,5 +85,5 @@ func main() {
 
 func ok(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte("ok"))
+	_, _ = w.Write([]byte("ok " + version.Build))
 }
