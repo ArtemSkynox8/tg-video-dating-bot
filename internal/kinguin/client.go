@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -34,10 +35,19 @@ func (c *Client) Product(ctx context.Context, productID string) (models.ProductQ
 }
 
 func (c *Client) ResolveRetailProduct(ctx context.Context, retailID string) (models.ProductQuote, error) {
+	basePath := strings.TrimRight(c.cfg.KinguinProductsPath, "/")
 	paths := []string{
-		strings.TrimRight(c.cfg.KinguinProductsPath, "/") + "?kinguinId=" + url.QueryEscape(retailID),
-		strings.TrimRight(c.cfg.KinguinProductsPath, "/") + "?kinguin_id=" + url.QueryEscape(retailID),
-		strings.TrimRight(c.cfg.KinguinProductsPath, "/") + "?q=" + url.QueryEscape(retailID),
+		basePath + "?kinguinId=" + url.QueryEscape(retailID),
+		basePath + "?kinguinID=" + url.QueryEscape(retailID),
+		basePath + "?kinguin_id=" + url.QueryEscape(retailID),
+		basePath + "?kinguinId[]=" + url.QueryEscape(retailID),
+		basePath + "?kinguinId[0]=" + url.QueryEscape(retailID),
+		basePath + "?externalId=" + url.QueryEscape(retailID),
+		basePath + "?external_id=" + url.QueryEscape(retailID),
+		basePath + "?id=" + url.QueryEscape(retailID),
+		basePath + "?q=" + url.QueryEscape(retailID),
+		basePath + "?search=" + url.QueryEscape(retailID),
+		basePath + "?phrase=" + url.QueryEscape(retailID),
 	}
 	errors := []string{}
 	for _, path := range uniqueStrings(paths) {
@@ -89,8 +99,9 @@ func (c *Client) firstProductFromCatalog(ctx context.Context, path, retailID str
 	if err := c.request(ctx, http.MethodGet, path, nil, &raw); err != nil {
 		return models.ProductQuote{}, err
 	}
-	for _, product := range productMaps(raw) {
-		if retailID != "" && firstString(product["kinguinId"], product["kinguin_id"], product["kinguinID"]) != retailID {
+	products := productMaps(raw)
+	for _, product := range products {
+		if retailID != "" && !productHasRetailID(product, retailID) {
 			continue
 		}
 		quote := quoteFromRaw("", product)
@@ -98,7 +109,7 @@ func (c *Client) firstProductFromCatalog(ctx context.Context, path, retailID str
 			return quote, nil
 		}
 	}
-	return models.ProductQuote{}, fmt.Errorf("kinguin catalog lookup returned no product for retail id %s", retailID)
+	return models.ProductQuote{}, fmt.Errorf("kinguin catalog lookup returned no product for retail id %s; returned=%d; sample=%s", retailID, len(products), productSample(products))
 }
 
 func (c *Client) productAtPath(ctx context.Context, path, productID string) (models.ProductQuote, error) {
@@ -144,6 +155,99 @@ func quoteFromRaw(productID string, raw map[string]any) models.ProductQuote {
 		Currency:  currency,
 		Qty:       qty,
 	}
+}
+
+func productRetailID(product map[string]any) string {
+	for key, raw := range product {
+		if !isRetailIDKey(key) {
+			continue
+		}
+		if value := firstString(raw); value != "" {
+			return value
+		}
+	}
+	for _, value := range product {
+		switch nested := value.(type) {
+		case map[string]any:
+			if found := productRetailID(nested); found != "" {
+				return found
+			}
+		case []any:
+			for _, item := range nested {
+				mapped, ok := item.(map[string]any)
+				if !ok {
+					continue
+				}
+				if found := productRetailID(mapped); found != "" {
+					return found
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func productHasRetailID(value any, retailID string) bool {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, raw := range typed {
+			if isRetailIDKey(key) && firstString(raw) == retailID {
+				return true
+			}
+			if productHasRetailID(raw, retailID) {
+				return true
+			}
+		}
+	case []any:
+		for _, item := range typed {
+			if productHasRetailID(item, retailID) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isRetailIDKey(key string) bool {
+	switch key {
+	case "kinguinId", "kinguinID", "kinguin_id", "retailId", "retailID", "retail_id", "externalId", "externalID", "external_id":
+		return true
+	default:
+		return false
+	}
+}
+
+func productSample(products []map[string]any) string {
+	if len(products) == 0 {
+		return "empty"
+	}
+	limit := len(products)
+	if limit > 3 {
+		limit = 3
+	}
+	parts := make([]string, 0, limit)
+	for i := 0; i < limit; i++ {
+		product := products[i]
+		parts = append(parts, fmt.Sprintf("{id=%s productId=%s kinguinId=%s name=%q keys=%s}",
+			firstString(product["id"]),
+			firstString(product["productId"]),
+			productRetailID(product),
+			firstString(product["name"], product["title"]),
+			strings.Join(sortedKeys(product), ",")))
+	}
+	return strings.Join(parts, "; ")
+}
+
+func sortedKeys(values map[string]any) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	if len(keys) > 12 {
+		return keys[:12]
+	}
+	return keys
 }
 
 func (c *Client) CreateOrder(ctx context.Context, productID string, clientOrderID string) (OrderResult, error) {

@@ -1,3 +1,3 @@
 package version
 
-const Build = "robux-tbank-20260628-retail-lookup"
+const Build = "robux-tbank-20260628-retail-lookup-v2"
