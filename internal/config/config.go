@@ -37,6 +37,9 @@ type Config struct {
 	TBankBaseURL         string
 	TBankTerminalKey     string
 	TBankPassword        string
+	TBankReceiptEmail    string
+	TBankTaxation        string
+	TBankReceiptTax      string
 	Products             []Product
 }
 
@@ -63,6 +66,9 @@ func Load() Config {
 		TBankBaseURL:         getEnv("TBANK_BASE_URL", "https://securepay.tinkoff.ru"),
 		TBankTerminalKey:     os.Getenv("TBANK_TERMINAL_KEY"),
 		TBankPassword:        os.Getenv("TBANK_PASSWORD"),
+		TBankReceiptEmail:    getEnv("TBANK_RECEIPT_EMAIL", "test@example.com"),
+		TBankTaxation:        getEnv("TBANK_TAXATION", "usn_income"),
+		TBankReceiptTax:      getEnv("TBANK_RECEIPT_TAX", "none"),
 		Products:             loadProducts(),
 	}
 }

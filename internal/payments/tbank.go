@@ -43,14 +43,30 @@ func (t *TBank) Create(ctx context.Context, orderID int64, amount float64, descr
 		return Payment{}, fmt.Errorf("T-Bank acquiring is not configured")
 	}
 	returnURL := t.cfg.PublicBaseURL + "/pay/success?order=" + url.QueryEscape(fmt.Sprint(orderID))
+	amountKopecks := int64(math.Round(amount * 100))
 	body := map[string]any{
 		"TerminalKey":     t.cfg.TBankTerminalKey,
-		"Amount":          int64(math.Round(amount * 100)),
+		"Amount":          amountKopecks,
 		"OrderId":         fmt.Sprint(orderID),
 		"Description":     description,
 		"SuccessURL":      returnURL,
 		"FailURL":         returnURL,
 		"NotificationURL": t.cfg.PublicBaseURL + "/pay/tbank/webhook",
+		"Receipt": map[string]any{
+			"Email":    t.cfg.TBankReceiptEmail,
+			"Taxation": t.cfg.TBankTaxation,
+			"Items": []map[string]any{
+				{
+					"Name":          description,
+					"Price":         amountKopecks,
+					"Quantity":      1,
+					"Amount":        amountKopecks,
+					"Tax":           t.cfg.TBankReceiptTax,
+					"PaymentMethod": "full_payment",
+					"PaymentObject": "commodity",
+				},
+			},
+		},
 		"DATA": map[string]string{
 			"order_id": fmt.Sprint(orderID),
 		},
