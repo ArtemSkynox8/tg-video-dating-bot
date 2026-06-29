@@ -124,7 +124,6 @@ func (s *ShopService) CompletePaidOrder(ctx context.Context, orderID int64, paym
 		return s.max.SendText(ctx, order.PlatformChatID, fmt.Sprintf("Оплата получена. Заказ #%d: %s на сумму %.0f руб.\n\nКод будет выдан вручную в ближайшее время.", order.ID, order.ProductLabel, order.OrderSum), nil)
 	}
 	result := kinguin.OrderResult{OrderID: order.KinguinOrderID}
-	var err error
 	if order.KinguinOrderID != "" {
 		result.Code, result.Details = s.kinguin.GetOrderCode(ctx, order.KinguinOrderID)
 	} else {
