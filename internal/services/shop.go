@@ -160,10 +160,7 @@ func (s *ShopService) CompletePaidOrder(ctx context.Context, orderID int64, paym
 	if err := s.repo.MarkOrderSuccess(ctx, order.ID, result.OrderID, result.Code); err != nil {
 		return err
 	}
-	return s.max.SendFormattedText(ctx, order.PlatformChatID,
-		giftCodeHTML(result.Code),
-		giftCodeText(result.Code),
-		nil)
+	return s.sendGiftCode(ctx, order.PlatformChatID, result.Code)
 }
 
 func (s *ShopService) sendStart(ctx context.Context, chatID string) error {
@@ -325,25 +322,17 @@ func (s *ShopService) deliverKinguinOrder(ctx context.Context, adminChatID strin
 }
 
 func (s *ShopService) sendGiftCode(ctx context.Context, chatID, code string) error {
-	return s.max.SendFormattedText(ctx, chatID,
-		giftCodeHTML(code),
-		giftCodeText(code),
-		nil)
+	if err := s.max.SendText(ctx, chatID, "Спасибо за оплату!\nВаш код активации:", nil); err != nil {
+		return err
+	}
+	if err := s.max.SendText(ctx, chatID, code, nil); err != nil {
+		return err
+	}
+	return s.max.SendText(ctx, chatID, giftCodeInstructionText(), nil)
 }
 
-func giftCodeHTML(code string) string {
-	return "Спасибо за оплату!<br>" +
-		"Ваш код активации: <code>" + escapeHTML(code) + "</code><br><br>" +
-		"<b>Краткая инструкция:</b><br>" +
-		"• Перейдите в браузере на страницу roblox.com/redeem.<br>" +
-		"• Войдите в свой аккаунт Roblox.<br>" +
-		"• Введите полученный 16-значный код в поле и нажмите кнопку Redeem."
-}
-
-func giftCodeText(code string) string {
-	return "Спасибо за оплату!\n" +
-		"Ваш код активации: " + code + "\n\n" +
-		"Краткая инструкция:\n" +
+func giftCodeInstructionText() string {
+	return "Краткая инструкция:\n" +
 		"• Перейдите в браузере на страницу roblox.com/redeem.\n" +
 		"• Войдите в свой аккаунт Roblox.\n" +
 		"• Введите полученный 16-значный код в поле и нажмите кнопку Redeem."
