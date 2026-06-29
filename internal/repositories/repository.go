@@ -81,6 +81,13 @@ func (r *Repository) MarkOrderSuccess(ctx context.Context, orderID int64, kingui
 	return err
 }
 
+func (r *Repository) MarkOrderManualWithKinguinOrder(ctx context.Context, orderID int64, kinguinOrderID, errorText string) error {
+	_, err := r.db.Exec(ctx, `
+		update orders set status=$2, kinguin_order_id=coalesce(nullif($3, ''), kinguin_order_id), error_text=$4, updated_at=now()
+		where id=$1`, orderID, models.OrderStatusManual, kinguinOrderID, errorText)
+	return err
+}
+
 func (r *Repository) MarkOrderError(ctx context.Context, orderID int64, status, errorText string) error {
 	_, err := r.db.Exec(ctx, `
 		update orders set status=$2, error_text=$3, updated_at=now()

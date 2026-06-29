@@ -87,15 +87,22 @@ func (s *ShopService) CompletePaidOrder(ctx context.Context, orderID int64, paym
 		)
 		return s.max.SendText(ctx, order.PlatformChatID, fmt.Sprintf("Оплата получена. Заказ #%d: %s на сумму %.0f руб.\n\nКод будет выдан вручную в ближайшее время.", order.ID, order.ProductLabel, order.OrderSum), nil)
 	}
-	result, err := s.kinguin.CreateOrder(ctx, order.KinguinProductID, order.SourcePrice, fmt.Sprintf("max-%d", order.ID))
+	result := kinguin.OrderResult{OrderID: order.KinguinOrderID}
+	var err error
+	if order.KinguinOrderID != "" {
+		result.Code, result.Details = s.kinguin.GetOrderCode(ctx, order.KinguinOrderID)
+	} else {
+		result, err = s.kinguin.CreateOrder(ctx, order.KinguinProductID, order.SourcePrice, fmt.Sprintf("max-%d", order.ID))
+	}
 	if err != nil {
-		_ = s.repo.MarkOrderError(ctx, order.ID, models.OrderStatusManual, err.Error())
+		_ = s.repo.MarkOrderManualWithKinguinOrder(ctx, order.ID, result.OrderID, err.Error())
 		_ = s.notifyAdmins(ctx, "Ошибка Kinguin после оплаты",
 			"Order: "+fmt.Sprint(order.ID),
 			"User: "+order.PlatformUserID,
 			"Nominal: "+order.ProductLabel,
 			"Kinguin product: "+order.KinguinProductID,
 			"Kinguin source price: "+fmt.Sprintf("%.2f %s", order.SourcePrice, order.SourceCurrency),
+			"Kinguin order: "+result.OrderID,
 			"Payment: "+paymentID,
 			"Error: "+err.Error(),
 		)
@@ -103,10 +110,14 @@ func (s *ShopService) CompletePaidOrder(ctx context.Context, orderID int64, paym
 	}
 	if result.Code == "" {
 		errText := "Kinguin order created, but code was not found in response"
-		_ = s.repo.MarkOrderError(ctx, order.ID, models.OrderStatusManual, errText)
+		if result.Details != "" {
+			errText += ": " + result.Details
+		}
+		_ = s.repo.MarkOrderManualWithKinguinOrder(ctx, order.ID, result.OrderID, errText)
 		_ = s.notifyAdmins(ctx, "Код Kinguin не найден в ответе",
 			"Order: "+fmt.Sprint(order.ID),
 			"Kinguin order: "+result.OrderID,
+			"Kinguin response: "+result.Details,
 			"User: "+order.PlatformUserID,
 		)
 		return s.max.SendText(ctx, order.PlatformChatID, "Оплата прошла, но код требует ручной проверки. Менеджер выдаст его в течение 10 минут.", nil)

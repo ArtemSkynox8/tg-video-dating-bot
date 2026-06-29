@@ -24,6 +24,7 @@ type Client struct {
 type OrderResult struct {
 	OrderID string
 	Code    string
+	Details string
 }
 
 func NewClient(cfg config.Config) *Client {
@@ -278,12 +279,45 @@ func (c *Client) CreateOrder(ctx context.Context, productID string, price float6
 			errors = append(errors, err.Error())
 			continue
 		}
-		return OrderResult{
+		result := OrderResult{
 			OrderID: firstString(raw["orderId"], raw["id"], raw["_id"]),
 			Code:    findCode(raw),
-		}, nil
+			Details: responseSample(raw),
+		}
+		if result.Code == "" && result.OrderID != "" {
+			code, details := c.GetOrderCode(ctx, result.OrderID)
+			result.Code = code
+			if details != "" {
+				result.Details = details
+			}
+		}
+		return result, nil
 	}
 	return OrderResult{}, fmt.Errorf("kinguin create order failed: %s", strings.Join(errors, " | "))
+}
+
+func (c *Client) GetOrderCode(ctx context.Context, orderID string) (string, string) {
+	paths := []string{
+		"/esa/api/v2/order/" + url.PathEscape(orderID),
+		"/esa/api/v2/orders/" + url.PathEscape(orderID),
+		"/esa/api/v2/order/" + url.PathEscape(orderID) + "/keys",
+		"/esa/api/v2/orders/" + url.PathEscape(orderID) + "/keys",
+		"/api/v2/order/" + url.PathEscape(orderID),
+		"/api/v2/orders/" + url.PathEscape(orderID),
+	}
+	errors := []string{}
+	for _, path := range uniqueStrings(paths) {
+		var raw any
+		if err := c.request(ctx, http.MethodGet, path, nil, &raw); err != nil {
+			errors = append(errors, err.Error())
+			continue
+		}
+		if code := findCode(raw); code != "" {
+			return code, responseSample(raw)
+		}
+		errors = append(errors, "no code at "+path+": "+responseSample(raw))
+	}
+	return "", strings.Join(errors, " | ")
 }
 
 func (c *Client) request(ctx context.Context, method, path string, in any, out any) error {
@@ -351,7 +385,7 @@ func uniqueStrings(values []string) []string {
 func findCode(value any) string {
 	switch v := value.(type) {
 	case map[string]any:
-		for _, key := range []string{"code", "key", "serial"} {
+		for _, key := range []string{"code", "key", "serial", "giftCode", "gift_code", "activationCode", "activation_code", "redeemCode", "redeem_code", "licenseKey", "license_key"} {
 			if text := firstString(v[key]); text != "" {
 				return text
 			}
@@ -369,6 +403,18 @@ func findCode(value any) string {
 		}
 	}
 	return ""
+}
+
+func responseSample(value any) string {
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Sprintf("%T", value)
+	}
+	text := string(payload)
+	if len(text) > 1200 {
+		return text[:1200]
+	}
+	return text
 }
 
 func firstMapFromArray(value any) map[string]any {
