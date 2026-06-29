@@ -161,8 +161,8 @@ func (s *ShopService) CompletePaidOrder(ctx context.Context, orderID int64, paym
 		return err
 	}
 	return s.max.SendFormattedText(ctx, order.PlatformChatID,
-		"Спасибо за оплату! Ваш код активации:<br><code>"+escapeHTML(result.Code)+"</code><br><br>Инструкция: откройте страницу активации Roblox Gift Cards, войдите в аккаунт Roblox, введите код и подтвердите активацию.",
-		"Спасибо за оплату! Ваш код активации:\n"+result.Code+"\n\nИнструкция: откройте страницу активации Roblox Gift Cards, войдите в аккаунт Roblox, введите код и подтвердите активацию.",
+		giftCodeHTML(result.Code),
+		giftCodeText(result.Code),
 		nil)
 }
 
@@ -326,9 +326,27 @@ func (s *ShopService) deliverKinguinOrder(ctx context.Context, adminChatID strin
 
 func (s *ShopService) sendGiftCode(ctx context.Context, chatID, code string) error {
 	return s.max.SendFormattedText(ctx, chatID,
-		"Спасибо за оплату! Ваш код активации:<br><code>"+escapeHTML(code)+"</code><br><br>Инструкция: откройте страницу активации Roblox Gift Cards, войдите в аккаунт Roblox, введите код и подтвердите активацию.",
-		"Спасибо за оплату! Ваш код активации:\n"+code+"\n\nИнструкция: откройте страницу активации Roblox Gift Cards, войдите в аккаунт Roblox, введите код и подтвердите активацию.",
+		giftCodeHTML(code),
+		giftCodeText(code),
 		nil)
+}
+
+func giftCodeHTML(code string) string {
+	return "Спасибо за оплату!<br>" +
+		"Ваш код активации: <code>" + escapeHTML(code) + "</code><br><br>" +
+		"<b>Краткая инструкция:</b><br>" +
+		"• Перейдите в браузере на страницу roblox.com/redeem.<br>" +
+		"• Войдите в свой аккаунт Roblox.<br>" +
+		"• Введите полученный 16-значный код в поле и нажмите кнопку Redeem."
+}
+
+func giftCodeText(code string) string {
+	return "Спасибо за оплату!\n" +
+		"Ваш код активации: " + code + "\n\n" +
+		"Краткая инструкция:\n" +
+		"• Перейдите в браузере на страницу roblox.com/redeem.\n" +
+		"• Войдите в свой аккаунт Roblox.\n" +
+		"• Введите полученный 16-значный код в поле и нажмите кнопку Redeem."
 }
 
 func (s *ShopService) notifyAdmins(ctx context.Context, lines ...string) error {
