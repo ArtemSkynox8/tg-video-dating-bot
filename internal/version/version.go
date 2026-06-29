@@ -1,3 +1,3 @@
 package version
 
-const Build = "robux-tbank-20260629-balance-waitlist"
+const Build = "robux-tbank-20260629-deliver-command"

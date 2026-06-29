@@ -71,6 +71,9 @@ func (s *ShopService) HandleMessage(ctx context.Context, msg maxapi.MessageUpdat
 	if strings.HasPrefix(text, "/stats") && s.isAdmin(msg.From.ID) {
 		return s.sendStats(ctx, user.PlatformChatID)
 	}
+	if strings.HasPrefix(text, "/deliver") && s.isAdmin(msg.From.ID) {
+		return s.deliverKinguinOrder(ctx, user.PlatformChatID, strings.Fields(msg.Text))
+	}
 	return s.sendStart(ctx, user.PlatformChatID)
 }
 
@@ -293,6 +296,40 @@ func (s *ShopService) sendStats(ctx context.Context, chatID string) error {
 		lines = append(lines, status+": "+strconv.FormatInt(stats[status], 10))
 	}
 	return s.max.SendText(ctx, chatID, strings.Join(lines, "\n"), nil)
+}
+
+func (s *ShopService) deliverKinguinOrder(ctx context.Context, adminChatID string, fields []string) error {
+	if len(fields) < 3 {
+		return s.max.SendText(ctx, adminChatID, "Использование: /deliver <order_id> <kinguin_order_id>", nil)
+	}
+	orderID, err := strconv.ParseInt(fields[1], 10, 64)
+	if err != nil || orderID <= 0 {
+		return s.max.SendText(ctx, adminChatID, "Некорректный order_id.", nil)
+	}
+	kinguinOrderID := strings.TrimSpace(fields[2])
+	order, err := s.repo.GetOrder(ctx, orderID)
+	if err != nil {
+		return s.max.SendText(ctx, adminChatID, "Заказ не найден.", nil)
+	}
+	code, details := s.kinguin.GetOrderCode(ctx, kinguinOrderID)
+	if code == "" {
+		_ = s.repo.MarkOrderManualWithKinguinOrder(ctx, order.ID, kinguinOrderID, "manual deliver failed: "+details)
+		return s.max.SendText(ctx, adminChatID, "Код пока не найден в Kinguin order "+kinguinOrderID+". Ответ: "+details, nil)
+	}
+	if err := s.repo.MarkOrderSuccess(ctx, order.ID, kinguinOrderID, code); err != nil {
+		return err
+	}
+	if err := s.sendGiftCode(ctx, order.PlatformChatID, code); err != nil {
+		return err
+	}
+	return s.max.SendText(ctx, adminChatID, fmt.Sprintf("Код по заказу #%d отправлен пользователю.", order.ID), nil)
+}
+
+func (s *ShopService) sendGiftCode(ctx context.Context, chatID, code string) error {
+	return s.max.SendFormattedText(ctx, chatID,
+		"Спасибо за оплату! Ваш код активации:<br><code>"+escapeHTML(code)+"</code><br><br>Инструкция: откройте страницу активации Roblox Gift Cards, войдите в аккаунт Roblox, введите код и подтвердите активацию.",
+		"Спасибо за оплату! Ваш код активации:\n"+code+"\n\nИнструкция: откройте страницу активации Roblox Gift Cards, войдите в аккаунт Roblox, введите код и подтвердите активацию.",
+		nil)
 }
 
 func (s *ShopService) notifyAdmins(ctx context.Context, lines ...string) error {
