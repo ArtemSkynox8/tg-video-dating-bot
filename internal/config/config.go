@@ -61,7 +61,7 @@ func Load() Config {
 		KinguinAuthHeader:    getEnv("KINGUIN_AUTH_HEADER", "X-Api-Key"),
 		KinguinProductsPath:  getEnv("KINGUIN_PRODUCTS_PATH", "/esa/api/v2/products"),
 		KinguinPricePath:     getEnv("KINGUIN_PRICE_PATH", ""),
-		KinguinOrdersPath:    getEnv("KINGUIN_ORDERS_PATH", "/esa/api/v2/orders"),
+		KinguinOrdersPath:    getEnv("KINGUIN_ORDERS_PATH", "/esa/api/v2/order"),
 		USDRUBRate:           floatEnv("USD_RUB_RATE", 90),
 		EURRUBRate:           floatEnv("EUR_RUB_RATE", 100),
 		MarkupPercent:        floatEnv("MARKUP_PERCENT", 0),

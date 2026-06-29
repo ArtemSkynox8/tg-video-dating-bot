@@ -94,6 +94,7 @@ func (s *ShopService) CompletePaidOrder(ctx context.Context, orderID int64, paym
 			"Order: "+fmt.Sprint(order.ID),
 			"User: "+order.PlatformUserID,
 			"Nominal: "+order.ProductLabel,
+			"Kinguin product: "+order.KinguinProductID,
 			"Payment: "+paymentID,
 			"Error: "+err.Error(),
 		)

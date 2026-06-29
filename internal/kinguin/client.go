@@ -263,14 +263,26 @@ func (c *Client) CreateOrder(ctx context.Context, productID string, clientOrderI
 		}},
 		"clientOrderId": clientOrderID,
 	}
-	var raw map[string]any
-	if err := c.request(ctx, http.MethodPost, c.cfg.KinguinOrdersPath, body, &raw); err != nil {
-		return OrderResult{}, err
+	paths := []string{
+		c.cfg.KinguinOrdersPath,
+		"/esa/api/v2/order",
+		"/esa/api/v2/orders",
+		"/api/v2/order",
+		"/api/v2/orders",
 	}
-	return OrderResult{
-		OrderID: firstString(raw["orderId"], raw["id"], raw["_id"]),
-		Code:    findCode(raw),
-	}, nil
+	errors := []string{}
+	for _, path := range uniqueStrings(paths) {
+		var raw map[string]any
+		if err := c.request(ctx, http.MethodPost, path, body, &raw); err != nil {
+			errors = append(errors, err.Error())
+			continue
+		}
+		return OrderResult{
+			OrderID: firstString(raw["orderId"], raw["id"], raw["_id"]),
+			Code:    findCode(raw),
+		}, nil
+	}
+	return OrderResult{}, fmt.Errorf("kinguin create order failed: %s", strings.Join(errors, " | "))
 }
 
 func (c *Client) request(ctx context.Context, method, path string, in any, out any) error {
