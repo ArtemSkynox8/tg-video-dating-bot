@@ -50,3 +50,12 @@ type ProductQuote struct {
 	Currency  string
 	Qty       int
 }
+
+type WaitlistEntry struct {
+	ID             int64
+	UserID         int64
+	PlatformUserID string
+	PlatformChatID string
+	NominalCode    string
+	ProductLabel    string
+}

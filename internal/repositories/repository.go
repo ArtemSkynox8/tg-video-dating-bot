@@ -95,6 +95,49 @@ func (r *Repository) MarkOrderError(ctx context.Context, orderID int64, status, 
 	return err
 }
 
+func (r *Repository) AddWaitlist(ctx context.Context, userID int64, nominalCode, productLabel string) error {
+	_, err := r.db.Exec(ctx, `
+		insert into restock_waitlist (user_id, nominal_code, product_label)
+		values ($1,$2,$3)
+		on conflict (user_id, nominal_code) do update set
+			product_label=excluded.product_label,
+			notified_at=null,
+			updated_at=now()`, userID, nominalCode, productLabel)
+	return err
+}
+
+func (r *Repository) WaitlistByNominal(ctx context.Context, nominalCode string) ([]models.WaitlistEntry, error) {
+	rows, err := r.db.Query(ctx, `
+		select w.id, w.user_id, u.platform_user_id, u.platform_chat_id, w.nominal_code, w.product_label
+		from restock_waitlist w join users u on u.id=w.user_id
+		where w.nominal_code=$1 and w.notified_at is null
+		order by w.created_at`, nominalCode)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []models.WaitlistEntry{}
+	for rows.Next() {
+		var item models.WaitlistEntry
+		if err := rows.Scan(&item.ID, &item.UserID, &item.PlatformUserID, &item.PlatformChatID, &item.NominalCode, &item.ProductLabel); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (r *Repository) MarkWaitlistNotified(ctx context.Context, ids []int64) error {
+	for _, id := range ids {
+		if _, err := r.db.Exec(ctx, `
+			update restock_waitlist set notified_at=now(), updated_at=now()
+			where id=$1`, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (r *Repository) Stats(ctx context.Context) (map[string]int64, error) {
 	rows, err := r.db.Query(ctx, `select status, count(*) from orders group by status`)
 	if err != nil {

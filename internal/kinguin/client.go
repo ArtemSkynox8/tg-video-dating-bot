@@ -320,6 +320,29 @@ func (c *Client) GetOrderCode(ctx context.Context, orderID string) (string, stri
 	return "", strings.Join(errors, " | ")
 }
 
+func (c *Client) Balance(ctx context.Context, currency string) (float64, error) {
+	paths := []string{
+		c.cfg.KinguinBalancePath,
+		"/esa/api/v2/account/balance",
+		"/esa/api/v2/balance",
+		"/api/v2/account/balance",
+		"/api/v2/balance",
+	}
+	errors := []string{}
+	for _, path := range uniqueStrings(paths) {
+		var raw any
+		if err := c.request(ctx, http.MethodGet, path, nil, &raw); err != nil {
+			errors = append(errors, err.Error())
+			continue
+		}
+		if amount, ok := findBalance(raw, currency); ok {
+			return amount, nil
+		}
+		errors = append(errors, "balance not found at "+path+": "+responseSample(raw))
+	}
+	return 0, fmt.Errorf("kinguin balance check failed: %s", strings.Join(errors, " | "))
+}
+
 func (c *Client) request(ctx context.Context, method, path string, in any, out any) error {
 	if c.cfg.KinguinAPIKey == "" {
 		return fmt.Errorf("KINGUIN_API_KEY is empty")
@@ -415,6 +438,61 @@ func responseSample(value any) string {
 		return text[:1200]
 	}
 	return text
+}
+
+func findBalance(value any, currency string) (float64, bool) {
+	currency = strings.ToUpper(strings.TrimSpace(currency))
+	switch v := value.(type) {
+	case map[string]any:
+		if amount, ok := firstFloatOK(v[currency], v[strings.ToLower(currency)]); ok {
+			return amount, true
+		}
+		itemCurrency := strings.ToUpper(firstString(v["currency"], v["curr"], v["code"], v["name"]))
+		if itemCurrency == currency {
+			if amount, ok := firstFloatOK(v["balance"], v["amount"], v["available"], v["availableBalance"], v["value"]); ok {
+				return amount, true
+			}
+		}
+		for _, key := range []string{"balances", "balance", "data", "items", "wallets", "accounts"} {
+			if amount, ok := findBalance(v[key], currency); ok {
+				return amount, true
+			}
+		}
+		for _, child := range v {
+			if amount, ok := findBalance(child, currency); ok {
+				return amount, true
+			}
+		}
+	case []any:
+		for _, child := range v {
+			if amount, ok := findBalance(child, currency); ok {
+				return amount, true
+			}
+		}
+	}
+	return 0, false
+}
+
+func firstFloatOK(values ...any) (float64, bool) {
+	for _, value := range values {
+		switch v := value.(type) {
+		case float64:
+			return v, true
+		case int:
+			return float64(v), true
+		case bool:
+			if v {
+				return 1, true
+			}
+			return 0, true
+		case string:
+			var out float64
+			if _, err := fmt.Sscan(v, &out); err == nil {
+				return out, true
+			}
+		}
+	}
+	return 0, false
 }
 
 func firstMapFromArray(value any) map[string]any {

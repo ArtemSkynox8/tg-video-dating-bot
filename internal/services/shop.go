@@ -7,6 +7,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ArtemSkynox8/tg-video-dating-bot/internal/config"
 	"github.com/ArtemSkynox8/tg-video-dating-bot/internal/kinguin"
@@ -27,6 +28,38 @@ type ShopService struct {
 
 func NewShopService(cfg config.Config, repo *repositories.Repository, max *maxapi.Client, kinguinClient *kinguin.Client, tbank *payments.TBank) *ShopService {
 	return &ShopService{cfg: cfg, repo: repo, max: max, kinguin: kinguinClient, tbank: tbank}
+}
+
+func (s *ShopService) StartRestockWatcher(ctx context.Context) {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.checkRestocks(ctx)
+		}
+	}
+}
+
+func (s *ShopService) checkRestocks(ctx context.Context) {
+	if s.cfg.KinguinAPIKey == "" {
+		return
+	}
+	for _, product := range s.cfg.Products {
+		quote, err := s.kinguin.ResolveRetailProduct(ctx, product.KinguinRetailID)
+		if err != nil || quote.Price <= 0 || quote.Qty <= 0 {
+			continue
+		}
+		balance, err := s.kinguin.Balance(ctx, quote.Currency)
+		if err != nil || balance < quote.Price {
+			continue
+		}
+		if err := s.notifyWaitlistRestocked(ctx, product.Code, product.Label); err != nil {
+			log.Printf("notify restock nominal=%s: %v", product.Code, err)
+		}
+	}
 }
 
 func (s *ShopService) HandleMessage(ctx context.Context, msg maxapi.MessageUpdate) error {
@@ -170,6 +203,31 @@ func (s *ShopService) createOrder(ctx context.Context, user *models.User, code s
 		log.Printf("kinguin retail lookup returned empty price retail=%s product=%s nominal=%s currency=%s qty=%d", retailID, productID, product.Code, quote.Currency, quote.Qty)
 		return s.max.SendText(ctx, user.PlatformChatID, "Не удалось получить цену товара. Попробуйте позже.", nil)
 	}
+	balance, err := s.kinguin.Balance(ctx, quote.Currency)
+	if err != nil {
+		log.Printf("kinguin balance check failed nominal=%s currency=%s price=%.2f: %v", product.Code, quote.Currency, quote.Price, err)
+		_ = s.notifyAdmins(ctx, "Не удалось проверить баланс Kinguin",
+			"Nominal: "+product.Label,
+			"Kinguin product: "+productID,
+			"Needed: "+fmt.Sprintf("%.2f %s", quote.Price, quote.Currency),
+			"Error: "+err.Error(),
+		)
+		return s.max.SendText(ctx, user.PlatformChatID, "Не удалось проверить наличие карточки. Повторите попытку позднее.", nil)
+	}
+	if balance < quote.Price {
+		if err := s.repo.AddWaitlist(ctx, user.ID, product.Code, product.Label); err != nil {
+			log.Printf("add waitlist user=%d nominal=%s: %v", user.ID, product.Code, err)
+		}
+		_ = s.notifyAdmins(ctx, "Не хватает баланса Kinguin для продажи",
+			"Nominal: "+product.Label,
+			"User: "+user.PlatformUserID,
+			"Kinguin product: "+productID,
+			"Needed: "+fmt.Sprintf("%.2f %s", quote.Price, quote.Currency),
+			"Balance: "+fmt.Sprintf("%.2f %s", balance, quote.Currency),
+		)
+		return s.max.SendText(ctx, user.PlatformChatID, "Данный номинал карточек временно закончился. Повторите попытку позднее, мы напишем вам, когда карточки появятся в продаже.", nil)
+	}
+	_ = s.notifyWaitlistRestocked(ctx, product.Code, product.Label)
 	orderSum := s.calculateRUB(quote.Price, quote.Currency)
 	order, err := s.repo.CreateOrder(ctx, models.Order{
 		UserID:           user.ID,
@@ -244,6 +302,30 @@ func (s *ShopService) notifyAdmins(ctx context.Context, lines ...string) error {
 	text := strings.Join(lines, "\n")
 	for _, adminID := range s.cfg.AdminPlatformIDs {
 		_ = s.max.SendText(ctx, adminID, text, nil)
+	}
+	return nil
+}
+
+func (s *ShopService) notifyWaitlistRestocked(ctx context.Context, nominalCode, productLabel string) error {
+	items, err := s.repo.WaitlistByNominal(ctx, nominalCode)
+	if err != nil {
+		return err
+	}
+	ids := []int64{}
+	for _, item := range items {
+		if item.PlatformChatID == "" {
+			continue
+		}
+		if err := s.max.SendText(ctx, item.PlatformChatID, productLabel+" снова появился в продаже. Можно вернуться в бот и оформить покупку.", [][]maxapi.Button{
+			{{Text: "Купить "+productLabel, Payload: "nominal:" + nominalCode}},
+		}); err != nil {
+			log.Printf("notify waitlist user=%s nominal=%s: %v", item.PlatformUserID, nominalCode, err)
+			continue
+		}
+		ids = append(ids, item.ID)
+	}
+	if len(ids) > 0 {
+		return s.repo.MarkWaitlistNotified(ctx, ids)
 	}
 	return nil
 }

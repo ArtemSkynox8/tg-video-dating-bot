@@ -42,6 +42,7 @@ func main() {
 	kinguinClient := kinguin.NewClient(cfg)
 	tbank := payments.NewTBank(cfg)
 	shop := services.NewShopService(cfg, repo, maxClient, kinguinClient, tbank)
+	go shop.StartRestockWatcher(ctx)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", ok)

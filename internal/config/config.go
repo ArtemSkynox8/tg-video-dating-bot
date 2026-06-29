@@ -30,6 +30,7 @@ type Config struct {
 	KinguinProductsPath  string
 	KinguinPricePath     string
 	KinguinOrdersPath    string
+	KinguinBalancePath   string
 	USDRUBRate           float64
 	EURRUBRate           float64
 	MarkupPercent        float64
@@ -62,6 +63,7 @@ func Load() Config {
 		KinguinProductsPath:  getEnv("KINGUIN_PRODUCTS_PATH", "/esa/api/v2/products"),
 		KinguinPricePath:     getEnv("KINGUIN_PRICE_PATH", ""),
 		KinguinOrdersPath:    getEnv("KINGUIN_ORDERS_PATH", "/esa/api/v2/order"),
+		KinguinBalancePath:   getEnv("KINGUIN_BALANCE_PATH", "/esa/api/v2/account/balance"),
 		USDRUBRate:           floatEnv("USD_RUB_RATE", 90),
 		EURRUBRate:           floatEnv("EUR_RUB_RATE", 100),
 		MarkupPercent:        floatEnv("MARKUP_PERCENT", 0),
