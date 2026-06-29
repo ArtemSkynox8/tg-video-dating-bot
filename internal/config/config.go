@@ -80,12 +80,17 @@ func Load() Config {
 }
 
 func loadProducts() []Product {
-	return []Product{
+	products := []Product{}
+	if retailID := firstNonEmptyEnv("ROBLOX_200_KINGUIN_ID", "PRODUCT_200_ROBUX", ""); retailID != "" {
+		products = append(products, Product{Code: "200", Label: "200 Robux", Card: "Region Free", KinguinRetailID: retailID, PriceRUB: floatEnv("ROBUX_200_PRICE_RUB", 299)})
+	}
+	products = append(products,
 		{Code: "400", Label: "400 Robux", Card: "Region Free", KinguinRetailID: firstNonEmptyEnv("ROBLOX_400_KINGUIN_ID", "PRODUCT_400_ROBUX", "107368"), PriceRUB: floatEnv("ROBUX_400_PRICE_RUB", 499)},
 		{Code: "700", Label: "700 Robux", Card: "Region Free", KinguinRetailID: firstNonEmptyEnv("ROBLOX_700_KINGUIN_ID", "PRODUCT_700_ROBUX", "357198"), PriceRUB: floatEnv("ROBUX_700_PRICE_RUB", 799)},
 		{Code: "800", Label: "800 Robux", Card: "Region Free", KinguinRetailID: firstNonEmptyEnv("ROBLOX_800_KINGUIN_ID", "PRODUCT_800_ROBUX", "107369"), PriceRUB: floatEnv("ROBUX_800_PRICE_RUB", 899)},
 		{Code: "2000", Label: "2000 Robux", Card: "Region Free", KinguinRetailID: firstNonEmptyEnv("ROBLOX_2000_KINGUIN_ID", "PRODUCT_2000_ROBUX", "107371"), PriceRUB: floatEnv("ROBUX_2000_PRICE_RUB", 2199)},
-	}
+	)
+	return products
 }
 
 func normalizeHTTPAddr(httpAddr, port string) string {
