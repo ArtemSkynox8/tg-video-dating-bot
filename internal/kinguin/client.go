@@ -255,10 +255,11 @@ func sortedKeys(values map[string]any) []string {
 	return keys
 }
 
-func (c *Client) CreateOrder(ctx context.Context, productID string, clientOrderID string) (OrderResult, error) {
+func (c *Client) CreateOrder(ctx context.Context, productID string, price float64, clientOrderID string) (OrderResult, error) {
 	body := map[string]any{
 		"products": []map[string]any{{
 			"productId": productID,
+			"price":     price,
 			"qty":       1,
 		}},
 		"clientOrderId": clientOrderID,

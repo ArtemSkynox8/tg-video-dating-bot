@@ -87,7 +87,7 @@ func (s *ShopService) CompletePaidOrder(ctx context.Context, orderID int64, paym
 		)
 		return s.max.SendText(ctx, order.PlatformChatID, fmt.Sprintf("Оплата получена. Заказ #%d: %s на сумму %.0f руб.\n\nКод будет выдан вручную в ближайшее время.", order.ID, order.ProductLabel, order.OrderSum), nil)
 	}
-	result, err := s.kinguin.CreateOrder(ctx, order.KinguinProductID, fmt.Sprintf("max-%d", order.ID))
+	result, err := s.kinguin.CreateOrder(ctx, order.KinguinProductID, order.SourcePrice, fmt.Sprintf("max-%d", order.ID))
 	if err != nil {
 		_ = s.repo.MarkOrderError(ctx, order.ID, models.OrderStatusManual, err.Error())
 		_ = s.notifyAdmins(ctx, "Ошибка Kinguin после оплаты",
@@ -95,6 +95,7 @@ func (s *ShopService) CompletePaidOrder(ctx context.Context, orderID int64, paym
 			"User: "+order.PlatformUserID,
 			"Nominal: "+order.ProductLabel,
 			"Kinguin product: "+order.KinguinProductID,
+			"Kinguin source price: "+fmt.Sprintf("%.2f %s", order.SourcePrice, order.SourceCurrency),
 			"Payment: "+paymentID,
 			"Error: "+err.Error(),
 		)

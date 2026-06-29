@@ -1,3 +1,3 @@
 package version
 
-const Build = "robux-tbank-20260629-kinguin-order-fix"
+const Build = "robux-tbank-20260629-kinguin-order-price"
