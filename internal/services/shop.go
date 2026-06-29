@@ -205,15 +205,15 @@ func (s *ShopService) createOrder(ctx context.Context, user *models.User, code s
 	balance, err := s.kinguin.Balance(ctx, quote.Currency)
 	if err != nil {
 		log.Printf("kinguin balance check failed nominal=%s currency=%s price=%.2f: %v", product.Code, quote.Currency, quote.Price, err)
-		_ = s.notifyAdmins(ctx, "Не удалось проверить баланс Kinguin",
+		_ = s.notifyAdmins(ctx, "Не удалось проверить баланс Kinguin, счет выставлен без проверки баланса",
 			"Nominal: "+product.Label,
+			"User: "+user.PlatformUserID,
 			"Kinguin product: "+productID,
 			"Needed: "+fmt.Sprintf("%.2f %s", quote.Price, quote.Currency),
 			"Error: "+err.Error(),
 		)
-		return s.max.SendText(ctx, user.PlatformChatID, "Не удалось проверить наличие карточки. Повторите попытку позднее.", nil)
 	}
-	if balance < quote.Price {
+	if err == nil && balance < quote.Price {
 		if err := s.repo.AddWaitlist(ctx, user.ID, product.Code, product.Label); err != nil {
 			log.Printf("add waitlist user=%d nominal=%s: %v", user.ID, product.Code, err)
 		}
