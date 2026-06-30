@@ -19,6 +19,7 @@ type Config struct {
 	HTTPAddr             string
 	PublicBaseURL        string
 	ReturnToBotURL       string
+	SupportURL          string
 	MaxAPIBaseURL        string
 	MaxBotToken          string
 	MaxWebhookSecret     string
@@ -52,6 +53,7 @@ func Load() Config {
 		HTTPAddr:             normalizeHTTPAddr(getEnv("HTTP_ADDR", ""), getEnv("PORT", "8080")),
 		PublicBaseURL:        strings.TrimRight(getEnv("PUBLIC_BASE_URL", "http://localhost:8080"), "/"),
 		ReturnToBotURL:       getEnv("RETURN_TO_BOT_URL", "https://max.ru/id550411830268_4_bot"),
+		SupportURL:           getEnv("SUPPORT_URL", "https://max.ru/u/f9LHodD0cOIeNOmeypwAxDR6yT3wvd5VJ7oPdXUk4OlmfT2vcctcWqOcTkk"),
 		MaxAPIBaseURL:        getEnv("MAX_API_BASE_URL", "https://platform-api.max.ru"),
 		MaxBotToken:          os.Getenv("MAX_BOT_TOKEN"),
 		MaxWebhookSecret:     os.Getenv("MAX_WEBHOOK_SECRET"),
