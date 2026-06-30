@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -69,8 +70,42 @@ func (s *ShopService) HandleMessage(ctx context.Context, msg maxapi.MessageUpdat
 	}
 	rawText := strings.TrimSpace(msg.Text)
 	text := strings.TrimSpace(strings.ToLower(rawText))
+	if user.IsNew {
+		_ = s.recordUserEvent(ctx, user, "new_user", "start")
+		_ = s.notifyFunnelEvent(ctx, user, "New user", "start", "first")
+	}
+	if text == "/admin" && s.isAdmin(msg.From.ID) {
+		return s.sendAdminMenu(ctx, user.PlatformChatID)
+	}
 	if strings.HasPrefix(text, "/stats") && s.isAdmin(msg.From.ID) {
 		return s.sendStats(ctx, user.PlatformChatID)
+	}
+	if strings.HasPrefix(text, "/botstats") && s.isAdmin(msg.From.ID) {
+		return s.sendBotStats(ctx, user.PlatformChatID)
+	}
+	if strings.HasPrefix(text, "/adstats_all") && s.isAdmin(msg.From.ID) {
+		return s.sendAdStats(ctx, user.PlatformChatID, "")
+	}
+	if strings.HasPrefix(text, "/adstats") && s.isAdmin(msg.From.ID) {
+		return s.sendAdStats(ctx, user.PlatformChatID, strings.TrimSpace(strings.TrimPrefix(rawText, "/adstats")))
+	}
+	if strings.HasPrefix(text, "/choicestats") && s.isAdmin(msg.From.ID) {
+		return s.sendChoiceStats(ctx, user.PlatformChatID)
+	}
+	if strings.HasPrefix(text, "/adtag") && s.isAdmin(msg.From.ID) {
+		return s.createAdTag(ctx, user.PlatformChatID, strings.TrimSpace(strings.TrimPrefix(rawText, "/adtag")))
+	}
+	if strings.HasPrefix(text, "/push_stats") && s.isAdmin(msg.From.ID) {
+		return s.sendPushStats(ctx, user.PlatformChatID)
+	}
+	if strings.HasPrefix(text, "/push") && s.isAdmin(msg.From.ID) {
+		return s.sendPush(ctx, user.PlatformChatID, strings.TrimSpace(strings.TrimPrefix(rawText, "/push")))
+	}
+	if strings.HasPrefix(text, "/payments") && s.isAdmin(msg.From.ID) {
+		return s.sendRecentPayments(ctx, user.PlatformChatID)
+	}
+	if strings.HasPrefix(text, "/errors") && s.isAdmin(msg.From.ID) {
+		return s.sendRecentErrors(ctx, user.PlatformChatID)
 	}
 	if (text == "/balance" || text == "баланс") && s.isAdmin(msg.From.ID) {
 		return s.sendWalletBalance(ctx, user.PlatformChatID)
@@ -101,9 +136,14 @@ func (s *ShopService) HandleCallback(ctx context.Context, cb maxapi.CallbackUpda
 
 	switch {
 	case cb.Payload == "buy":
+		_ = s.recordUserEvent(ctx, user, "buy_clicked", "buy")
+		_ = s.notifyFunnelEvent(ctx, user, "Offer reached", "buy_clicked", "button")
 		return s.sendNominals(ctx, user.PlatformChatID)
 	case strings.HasPrefix(cb.Payload, "nominal:"):
-		return s.createOrder(ctx, user, strings.TrimPrefix(cb.Payload, "nominal:"))
+		code := strings.TrimPrefix(cb.Payload, "nominal:")
+		_ = s.recordUserEvent(ctx, user, "nominal_selected", code)
+		_ = s.notifyFunnelEvent(ctx, user, "Nominal selected", code, "button")
+		return s.createOrder(ctx, user, code)
 	default:
 		return s.sendStart(ctx, user.PlatformChatID)
 	}
@@ -141,6 +181,7 @@ func (s *ShopService) CompletePaidOrder(ctx context.Context, orderID int64, paym
 	}
 	if err != nil {
 		_ = s.repo.MarkOrderManualWithKinguinOrder(ctx, order.ID, result.OrderID, err.Error())
+		_ = s.recordUserEvent(ctx, orderUser(order), "kinguin_error", order.ProductLabel)
 		_ = s.notifyAdmins(ctx, "Ошибка Kinguin после оплаты",
 			"Order: "+fmt.Sprint(order.ID),
 			"Nominal: "+order.ProductLabel,
@@ -157,6 +198,7 @@ func (s *ShopService) CompletePaidOrder(ctx context.Context, orderID int64, paym
 		}
 		_ = s.repo.MarkOrderManualWithKinguinOrder(ctx, order.ID, result.OrderID, errText)
 		log.Printf("kinguin code not found order=%d kinguin_order=%s details=%s", order.ID, result.OrderID, result.Details)
+		_ = s.recordUserEvent(ctx, orderUser(order), "kinguin_code_missing", order.ProductLabel)
 		_ = s.notifyAdmins(ctx, "Код Kinguin не найден",
 			"Order: "+fmt.Sprint(order.ID),
 			"Kinguin order: "+result.OrderID,
@@ -167,6 +209,7 @@ func (s *ShopService) CompletePaidOrder(ctx context.Context, orderID int64, paym
 	if err := s.markOrderSuccessAndDebit(ctx, order, result.OrderID, result.Code); err != nil {
 		return err
 	}
+	_ = s.recordUserEvent(ctx, orderUser(order), "payment_success", order.ProductLabel)
 	return s.sendGiftCode(ctx, order.PlatformChatID, result.Code)
 }
 
@@ -260,6 +303,8 @@ func (s *ShopService) createOrder(ctx context.Context, user *models.User, code s
 	if err := s.repo.UpdateOrderPayment(ctx, order.ID, models.OrderStatusPending, payment.ID, payment.URL); err != nil {
 		return err
 	}
+	_ = s.recordUserEvent(ctx, user, "payment_created", product.Code)
+	_ = s.notifyFunnelEvent(ctx, user, "Payment created", product.Code, fmt.Sprintf("%.0f руб.", orderSum))
 	return s.max.SendText(ctx, user.PlatformChatID,
 		fmt.Sprintf("Счет на оплату: %s\nСумма к оплате: %.0f руб.\n\nПосле оплаты мы проверим заказ и выдадим код.", product.Label, orderSum),
 		[][]maxapi.Button{{{Text: fmt.Sprintf("Оплатить %.0f руб.", orderSum), URL: payment.URL}}})
@@ -299,6 +344,145 @@ func (s *ShopService) sendStats(ctx context.Context, chatID string) error {
 		lines = append(lines, status+": "+strconv.FormatInt(stats[status], 10))
 	}
 	return s.max.SendText(ctx, chatID, strings.Join(lines, "\n"), nil)
+}
+
+func (s *ShopService) sendAdminMenu(ctx context.Context, chatID string) error {
+	return s.max.SendText(ctx, chatID, strings.Join([]string{
+		"Админ-меню",
+		"",
+		"/adstats метка - статистика по метке",
+		"/adstats_all - статистика по всем меткам",
+		"/botstats - общая статистика",
+		"/choicestats - статистика выбора номинала",
+		"/adtag метка - создать ссылку с меткой",
+		"/push текст - отправить пуш активным пользователям и админам",
+		"/push_stats - диагностика базы и последнего пуша",
+		"/payments - последние оплаты",
+		"/errors - последние ошибки",
+		"/balance - внутренний баланс Kinguin",
+	}, "\n"), nil)
+}
+
+func (s *ShopService) sendBotStats(ctx context.Context, chatID string) error {
+	stats, err := s.repo.Stats(ctx)
+	if err != nil {
+		return err
+	}
+	events, err := s.repo.EventStats(ctx, "")
+	if err != nil {
+		return err
+	}
+	lines := []string{"Общая статистика", "", "Заказы:"}
+	for _, status := range []string{models.OrderStatusCreated, models.OrderStatusPending, models.OrderStatusPaid, models.OrderStatusSuccess, models.OrderStatusError, models.OrderStatusManual} {
+		lines = append(lines, status+": "+strconv.FormatInt(stats[status], 10))
+	}
+	lines = append(lines, "", "События:")
+	lines = append(lines, formatEventStats(events)...)
+	return s.max.SendText(ctx, chatID, strings.Join(lines, "\n"), nil)
+}
+
+func (s *ShopService) sendAdStats(ctx context.Context, chatID, tag string) error {
+	events, err := s.repo.EventStats(ctx, tag)
+	if err != nil {
+		return err
+	}
+	title := "Статистика по всем меткам"
+	if strings.TrimSpace(tag) != "" {
+		title = "Статистика по метке: " + strings.TrimSpace(tag)
+	}
+	lines := []string{title}
+	lines = append(lines, formatEventStats(events)...)
+	return s.max.SendText(ctx, chatID, strings.Join(lines, "\n"), nil)
+}
+
+func (s *ShopService) sendChoiceStats(ctx context.Context, chatID string) error {
+	stats, err := s.repo.ChoiceStats(ctx)
+	if err != nil {
+		return err
+	}
+	lines := []string{"Статистика выбора номинала"}
+	lines = append(lines, formatEventStats(stats)...)
+	return s.max.SendText(ctx, chatID, strings.Join(lines, "\n"), nil)
+}
+
+func (s *ShopService) createAdTag(ctx context.Context, chatID, tag string) error {
+	tag = strings.TrimSpace(tag)
+	if tag == "" {
+		return s.max.SendText(ctx, chatID, "Формат: /adtag link2", nil)
+	}
+	link := s.cfg.ReturnToBotURL
+	if strings.Contains(link, "?") {
+		link += "&start=" + url.QueryEscape(tag)
+	} else {
+		link += "?start=" + url.QueryEscape(tag)
+	}
+	return s.max.SendText(ctx, chatID, "Ссылка для метки "+tag+":\n"+link, nil)
+}
+
+func (s *ShopService) sendPush(ctx context.Context, chatID, text string) error {
+	if strings.TrimSpace(text) == "" {
+		return s.max.SendText(ctx, chatID, "Формат: /push текст сообщения", nil)
+	}
+	users, err := s.repo.ActiveUsers(ctx)
+	if err != nil {
+		return err
+	}
+	seen := map[string]bool{}
+	sent, failed := 0, 0
+	for _, user := range users {
+		if user.PlatformChatID == "" || seen[user.PlatformChatID] {
+			continue
+		}
+		seen[user.PlatformChatID] = true
+		if err := s.max.SendText(ctx, user.PlatformChatID, text, nil); err != nil {
+			failed++
+			continue
+		}
+		sent++
+	}
+	for _, adminID := range s.cfg.AdminPlatformIDs {
+		if adminID == "" || seen[adminID] {
+			continue
+		}
+		seen[adminID] = true
+		if err := s.max.SendText(ctx, adminID, text, nil); err != nil {
+			failed++
+			continue
+		}
+		sent++
+	}
+	_ = s.repo.LogPush(ctx, text, sent, failed)
+	return s.max.SendText(ctx, chatID, fmt.Sprintf("Пуш отправлен.\nSent: %d\nErrors: %d", sent, failed), nil)
+}
+
+func (s *ShopService) sendPushStats(ctx context.Context, chatID string) error {
+	stats, err := s.repo.PushStats(ctx)
+	if err != nil {
+		return err
+	}
+	return s.max.SendText(ctx, chatID, stats, nil)
+}
+
+func (s *ShopService) sendRecentPayments(ctx context.Context, chatID string) error {
+	lines, err := s.repo.RecentPayments(ctx, 10)
+	if err != nil {
+		return err
+	}
+	if len(lines) == 0 {
+		lines = []string{"Оплат пока нет."}
+	}
+	return s.max.SendText(ctx, chatID, "Последние оплаты:\n"+strings.Join(lines, "\n"), nil)
+}
+
+func (s *ShopService) sendRecentErrors(ctx context.Context, chatID string) error {
+	lines, err := s.repo.RecentErrors(ctx, 10)
+	if err != nil {
+		return err
+	}
+	if len(lines) == 0 {
+		lines = []string{"Ошибок пока нет."}
+	}
+	return s.max.SendText(ctx, chatID, "Последние ошибки:\n"+strings.Join(lines, "\n"), nil)
 }
 
 func (s *ShopService) sendWalletBalance(ctx context.Context, chatID string) error {
@@ -437,6 +621,38 @@ func (s *ShopService) notifyAdmins(ctx context.Context, lines ...string) error {
 	return nil
 }
 
+func (s *ShopService) recordUserEvent(ctx context.Context, user *models.User, eventType, details string) error {
+	if err := s.repo.RecordEvent(ctx, user, eventType, details); err != nil {
+		log.Printf("record event user=%s event=%s: %v", user.PlatformUserID, eventType, err)
+		return err
+	}
+	return nil
+}
+
+func (s *ShopService) notifyFunnelEvent(ctx context.Context, user *models.User, title, reason, eventType string) error {
+	if user == nil {
+		return nil
+	}
+	return s.notifyAdmins(ctx,
+		title,
+		"ID: "+user.PlatformUserID,
+		"Tag: "+emptyDefault(user.AdTag, "direct"),
+		"Reason: "+reason,
+		"Type: "+eventType,
+	)
+}
+
+func formatEventStats(items []models.EventStat) []string {
+	if len(items) == 0 {
+		return []string{"Нет данных."}
+	}
+	lines := []string{}
+	for _, item := range items {
+		lines = append(lines, item.Name+": "+strconv.FormatInt(item.Count, 10))
+	}
+	return lines
+}
+
 func (s *ShopService) notifyWaitlistRestocked(ctx context.Context, nominalCode, productLabel string) error {
 	items, err := s.repo.WaitlistByNominal(ctx, nominalCode)
 	if err != nil {
@@ -551,6 +767,16 @@ func userFromMessage(msg maxapi.MessageUpdate) models.User {
 		PlatformChatID: firstNonEmpty(msg.Chat.ID, msg.From.ID),
 		Username:       msg.From.Username,
 		Name:           displayName(msg.From),
+		AdTag:          emptyDefault(msg.AdTag, "direct"),
+	}
+}
+
+func orderUser(order *models.Order) *models.User {
+	return &models.User{
+		ID:             order.UserID,
+		PlatformUserID: order.PlatformUserID,
+		PlatformChatID: order.PlatformChatID,
+		AdTag:          "direct",
 	}
 }
 
@@ -565,6 +791,13 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func emptyDefault(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return strings.TrimSpace(value)
 }
 
 func escapeHTML(value string) string {

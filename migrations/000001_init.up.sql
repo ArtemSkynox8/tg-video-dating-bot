@@ -4,6 +4,7 @@ create table if not exists users (
 	platform_chat_id text not null,
 	username text,
 	name text,
+	ad_tag text not null default 'direct',
 	created_at timestamptz not null default now(),
 	updated_at timestamptz not null default now()
 );
@@ -55,5 +56,26 @@ create table if not exists wallet_debits (
 	order_id bigint primary key references orders(id) on delete cascade,
 	currency text not null,
 	amount numeric(12,2) not null,
+	created_at timestamptz not null default now()
+);
+
+create table if not exists user_events (
+	id bigserial primary key,
+	user_id bigint references users(id) on delete set null,
+	platform_user_id text not null,
+	ad_tag text not null default 'direct',
+	event_type text not null,
+	details text,
+	created_at timestamptz not null default now()
+);
+
+create index if not exists user_events_tag_idx on user_events(ad_tag, created_at desc);
+create index if not exists user_events_type_idx on user_events(event_type, created_at desc);
+
+create table if not exists push_logs (
+	id bigserial primary key,
+	text text not null,
+	sent_count integer not null default 0,
+	error_count integer not null default 0,
 	created_at timestamptz not null default now()
 );

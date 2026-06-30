@@ -3,6 +3,8 @@ package repositories
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/ArtemSkynox8/tg-video-dating-bot/internal/models"
 	"github.com/jackc/pgx/v5"
@@ -21,16 +23,23 @@ func New(db *pgxpool.Pool) *Repository {
 
 func (r *Repository) UpsertUser(ctx context.Context, user models.User) (*models.User, error) {
 	row := r.db.QueryRow(ctx, `
-		insert into users (platform_user_id, platform_chat_id, username, name)
-		values ($1, $2, nullif($3, ''), nullif($4, ''))
+		insert into users (platform_user_id, platform_chat_id, username, name, ad_tag)
+		values ($1, $2, nullif($3, ''), nullif($4, ''), coalesce(nullif($5, ''), 'direct'))
 		on conflict (platform_user_id) do update set
 			platform_chat_id = excluded.platform_chat_id,
 			username = coalesce(excluded.username, users.username),
 			name = coalesce(excluded.name, users.name),
+			ad_tag = case when users.ad_tag='direct' and excluded.ad_tag <> 'direct' then excluded.ad_tag else users.ad_tag end,
 			updated_at = now()
-		returning id, platform_user_id, platform_chat_id, coalesce(username, ''), coalesce(name, ''), created_at, updated_at`,
-		user.PlatformUserID, user.PlatformChatID, user.Username, user.Name)
-	return scanUser(row)
+		returning id, platform_user_id, platform_chat_id, coalesce(username, ''), coalesce(name, ''),
+			coalesce(ad_tag, 'direct'), (xmax = 0), created_at, updated_at`,
+		user.PlatformUserID, user.PlatformChatID, user.Username, user.Name, user.AdTag)
+	var out models.User
+	err := row.Scan(&out.ID, &out.PlatformUserID, &out.PlatformChatID, &out.Username, &out.Name, &out.AdTag, &out.IsNew, &out.CreatedAt, &out.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return &out, err
 }
 
 func (r *Repository) CreateOrder(ctx context.Context, order models.Order) (*models.Order, error) {
@@ -228,6 +237,165 @@ func (r *Repository) Stats(ctx context.Context) (map[string]int64, error) {
 	return out, rows.Err()
 }
 
+func (r *Repository) RecordEvent(ctx context.Context, user *models.User, eventType, details string) error {
+	if user == nil {
+		return nil
+	}
+	_, err := r.db.Exec(ctx, `
+		insert into user_events (user_id, platform_user_id, ad_tag, event_type, details)
+		values ($1,$2,$3,$4,nullif($5, ''))`,
+		user.ID, user.PlatformUserID, emptyDefault(user.AdTag, "direct"), eventType, details)
+	return err
+}
+
+func (r *Repository) EventStats(ctx context.Context, tag string) ([]models.EventStat, error) {
+	query := `select event_type, count(*) from user_events`
+	args := []any{}
+	if strings.TrimSpace(tag) != "" {
+		query += ` where ad_tag=$1`
+		args = append(args, strings.TrimSpace(tag))
+	}
+	query += ` group by event_type order by event_type`
+	rows, err := r.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []models.EventStat{}
+	for rows.Next() {
+		var item models.EventStat
+		if err := rows.Scan(&item.Name, &item.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (r *Repository) ChoiceStats(ctx context.Context) ([]models.EventStat, error) {
+	rows, err := r.db.Query(ctx, `
+		select coalesce(nullif(details, ''), 'unknown'), count(*)
+		from user_events
+		where event_type='nominal_selected'
+		group by details
+		order by count(*) desc, details`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []models.EventStat{}
+	for rows.Next() {
+		var item models.EventStat
+		if err := rows.Scan(&item.Name, &item.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (r *Repository) ActiveUsers(ctx context.Context) ([]models.User, error) {
+	rows, err := r.db.Query(ctx, `
+		select id, platform_user_id, platform_chat_id, coalesce(username, ''), coalesce(name, ''),
+			coalesce(ad_tag, 'direct'), created_at, updated_at
+		from users
+		where platform_chat_id <> ''
+		order by updated_at desc`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []models.User{}
+	for rows.Next() {
+		var user models.User
+		if err := rows.Scan(&user.ID, &user.PlatformUserID, &user.PlatformChatID, &user.Username, &user.Name, &user.AdTag, &user.CreatedAt, &user.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, user)
+	}
+	return out, rows.Err()
+}
+
+func (r *Repository) LogPush(ctx context.Context, text string, sent, failed int) error {
+	_, err := r.db.Exec(ctx, `
+		insert into push_logs (text, sent_count, error_count)
+		values ($1,$2,$3)`, text, sent, failed)
+	return err
+}
+
+func (r *Repository) PushStats(ctx context.Context) (string, error) {
+	var users int64
+	if err := r.db.QueryRow(ctx, `select count(*) from users`).Scan(&users); err != nil {
+		return "", err
+	}
+	var events int64
+	if err := r.db.QueryRow(ctx, `select count(*) from user_events`).Scan(&events); err != nil {
+		return "", err
+	}
+	var text string
+	var sent, failed int
+	err := r.db.QueryRow(ctx, `
+		select coalesce(text, ''), sent_count, error_count
+		from push_logs
+		order by created_at desc
+		limit 1`).Scan(&text, &sent, &failed)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Sprintf("Users: %d\nEvents: %d\nLast push: none", users, events), nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("Users: %d\nEvents: %d\nLast push sent: %d\nLast push errors: %d\nText: %s", users, events, sent, failed, trimForAdmin(text, 120)), nil
+}
+
+func (r *Repository) RecentPayments(ctx context.Context, limit int) ([]string, error) {
+	rows, err := r.db.Query(ctx, `
+		select id, product_label, order_sum, status, coalesce(payment_id, ''), created_at
+		from orders
+		where payment_id is not null
+		order by updated_at desc
+		limit $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var id int64
+		var label, status, paymentID string
+		var sum float64
+		var created any
+		if err := rows.Scan(&id, &label, &sum, &status, &paymentID, &created); err != nil {
+			return nil, err
+		}
+		out = append(out, fmt.Sprintf("#%d %s %.0f руб. %s payment=%s", id, label, sum, status, paymentID))
+	}
+	return out, rows.Err()
+}
+
+func (r *Repository) RecentErrors(ctx context.Context, limit int) ([]string, error) {
+	rows, err := r.db.Query(ctx, `
+		select id, product_label, status, coalesce(kinguin_order_id, ''), coalesce(error_text, '')
+		from orders
+		where error_text is not null and error_text <> ''
+		order by updated_at desc
+		limit $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var id int64
+		var label, status, kinguinOrderID, errorText string
+		if err := rows.Scan(&id, &label, &status, &kinguinOrderID, &errorText); err != nil {
+			return nil, err
+		}
+		out = append(out, fmt.Sprintf("#%d %s %s kinguin=%s error=%s", id, label, status, kinguinOrderID, trimForAdmin(errorText, 90)))
+	}
+	return out, rows.Err()
+}
+
 func orderSelect() string {
 	return `
 		select o.id, o.user_id, u.platform_user_id, u.platform_chat_id, o.nominal_code, o.product_label,
@@ -240,11 +408,26 @@ func orderSelect() string {
 
 func scanUser(row pgx.Row) (*models.User, error) {
 	var user models.User
-	err := row.Scan(&user.ID, &user.PlatformUserID, &user.PlatformChatID, &user.Username, &user.Name, &user.CreatedAt, &user.UpdatedAt)
+	err := row.Scan(&user.ID, &user.PlatformUserID, &user.PlatformChatID, &user.Username, &user.Name, &user.AdTag, &user.CreatedAt, &user.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	return &user, err
+}
+
+func emptyDefault(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return strings.TrimSpace(value)
+}
+
+func trimForAdmin(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	if len(value) <= limit {
+		return value
+	}
+	return value[:limit] + "..."
 }
 
 func scanOrder(row pgx.Row) (*models.Order, error) {

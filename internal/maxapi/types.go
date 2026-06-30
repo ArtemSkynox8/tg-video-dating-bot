@@ -27,6 +27,7 @@ type MessageUpdate struct {
 	Dialog    Chat         `json:"dialog,omitempty"`
 	From      PlatformUser `json:"from"`
 	Text      string       `json:"text,omitempty"`
+	AdTag     string       `json:"ad_tag,omitempty"`
 	Media     []Media      `json:"media,omitempty"`
 	Contacts  []Contact    `json:"contacts,omitempty"`
 	Forward   *ForwardInfo `json:"forward,omitempty"`

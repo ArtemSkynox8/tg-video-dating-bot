@@ -65,6 +65,17 @@ func main() {
 		}
 		if err := maxClient.SetCommands(ctx, []maxapi.Command{
 			{Name: "start", Description: "Главное меню"},
+			{Name: "admin", Description: "Админ-меню"},
+			{Name: "botstats", Description: "Общая статистика"},
+			{Name: "adstats", Description: "Статистика по метке"},
+			{Name: "adstats_all", Description: "Статистика по всем меткам"},
+			{Name: "choicestats", Description: "Статистика выбора номинала"},
+			{Name: "adtag", Description: "Создать ссылку с меткой"},
+			{Name: "push", Description: "Пуш активным пользователям"},
+			{Name: "push_stats", Description: "Диагностика пушей"},
+			{Name: "payments", Description: "Последние оплаты"},
+			{Name: "errors", Description: "Последние ошибки"},
+			{Name: "balance", Description: "Внутренний баланс Kinguin"},
 			{Name: "stats", Description: "Статистика заказов"},
 		}); err != nil {
 			log.Printf("set max commands: %v", err)

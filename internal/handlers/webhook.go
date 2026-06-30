@@ -56,6 +56,7 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				Chat:      maxapi.Chat{ID: update.User.ID},
 				From:      *update.User,
 				Text:      "/start",
+				AdTag:     firstNonEmpty(update.Payload, update.StartParam, update.StartParamCamel, update.StartPayload, update.StartPayloadCamel, update.DeepLinkPayload),
 			})
 		}
 	case "message_callback":
@@ -73,6 +74,15 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("ok"))
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func normalizeMessage(update maxapi.Update) maxapi.MessageUpdate {

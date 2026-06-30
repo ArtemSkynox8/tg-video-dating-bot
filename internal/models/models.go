@@ -17,6 +17,8 @@ type User struct {
 	PlatformChatID string
 	Username       string
 	Name           string
+	AdTag          string
+	IsNew          bool
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 }
@@ -58,4 +60,9 @@ type WaitlistEntry struct {
 	PlatformChatID string
 	NominalCode    string
 	ProductLabel    string
+}
+
+type EventStat struct {
+	Name  string
+	Count int64
 }
