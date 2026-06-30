@@ -83,6 +83,9 @@ func Load() Config {
 
 func loadProducts() []Product {
 	products := []Product{}
+	if retailID := firstNonEmptyEnv("ROBLOX_100_KINGUIN_ID", "PRODUCT_100_ROBUX", ""); retailID != "" {
+		products = append(products, Product{Code: "100", Label: "100 Robux", Card: "Region Free", KinguinRetailID: retailID, PriceRUB: floatEnv("ROBUX_100_PRICE_RUB", 199)})
+	}
 	if retailID := firstNonEmptyEnv("ROBLOX_200_KINGUIN_ID", "PRODUCT_200_ROBUX", ""); retailID != "" {
 		products = append(products, Product{Code: "200", Label: "200 Robux", Card: "Region Free", KinguinRetailID: retailID, PriceRUB: floatEnv("ROBUX_200_PRICE_RUB", 299)})
 	}
