@@ -95,6 +95,78 @@ func (r *Repository) MarkOrderError(ctx context.Context, orderID int64, status, 
 	return err
 }
 
+func (r *Repository) WalletBalance(ctx context.Context, currency string) (float64, error) {
+	var amount float64
+	err := r.db.QueryRow(ctx, `
+		select amount from wallet_balances where currency=$1`, currency).Scan(&amount)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, nil
+	}
+	return amount, err
+}
+
+func (r *Repository) SetWalletBalance(ctx context.Context, currency string, amount float64) (float64, error) {
+	var current float64
+	err := r.db.QueryRow(ctx, `
+		insert into wallet_balances (currency, amount)
+		values ($1,$2)
+		on conflict (currency) do update set amount=excluded.amount, updated_at=now()
+		returning amount`, currency, amount).Scan(&current)
+	return current, err
+}
+
+func (r *Repository) AddWalletBalance(ctx context.Context, currency string, amount float64) (float64, error) {
+	var current float64
+	err := r.db.QueryRow(ctx, `
+		insert into wallet_balances (currency, amount)
+		values ($1,$2)
+		on conflict (currency) do update set amount=wallet_balances.amount+excluded.amount, updated_at=now()
+		returning amount`, currency, amount).Scan(&current)
+	return current, err
+}
+
+func (r *Repository) DebitWalletForOrder(ctx context.Context, orderID int64, currency string, amount float64) (float64, bool, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return 0, false, err
+	}
+	defer tx.Rollback(ctx)
+
+	var insertedOrderID int64
+	err = tx.QueryRow(ctx, `
+		insert into wallet_debits (order_id, currency, amount)
+		values ($1,$2,$3)
+		on conflict (order_id) do nothing
+		returning order_id`, orderID, currency, amount).Scan(&insertedOrderID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		var current float64
+		if err := tx.QueryRow(ctx, `select amount from wallet_balances where currency=$1`, currency).Scan(&current); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return 0, false, tx.Commit(ctx)
+			}
+			return 0, false, err
+		}
+		return current, false, tx.Commit(ctx)
+	}
+	if err != nil {
+		return 0, false, err
+	}
+
+	var current float64
+	err = tx.QueryRow(ctx, `
+		insert into wallet_balances (currency, amount)
+		values ($1, 0-$2)
+		on conflict (currency) do update set amount=wallet_balances.amount-$2, updated_at=now()
+		returning amount`, currency, amount).Scan(&current)
+	if err != nil {
+		return 0, false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, false, err
+	}
+	return current, true, nil
+}
+
 func (r *Repository) AddWaitlist(ctx context.Context, userID int64, nominalCode, productLabel string) error {
 	_, err := r.db.Exec(ctx, `
 		insert into restock_waitlist (user_id, nominal_code, product_label)

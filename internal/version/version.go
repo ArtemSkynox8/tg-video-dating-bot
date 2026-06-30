@@ -1,3 +1,3 @@
 package version
 
-const Build = "robux-tbank-20260629-balance-check-soft"
+const Build = "robux-tbank-20260630-internal-balance-retry-code"

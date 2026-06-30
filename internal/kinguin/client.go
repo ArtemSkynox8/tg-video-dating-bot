@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -26,6 +27,8 @@ type OrderResult struct {
 	Code    string
 	Details string
 }
+
+var ErrBalanceUnsupported = errors.New("kinguin balance endpoint unsupported")
 
 func NewClient(cfg config.Config) *Client {
 	return &Client{cfg: cfg, http: &http.Client{Timeout: 30 * time.Second}}
@@ -284,7 +287,14 @@ func (c *Client) CreateOrder(ctx context.Context, productID string, price float6
 			Code:    findCode(raw),
 			Details: responseSample(raw),
 		}
-		if result.Code == "" && result.OrderID != "" {
+		for attempt := 0; result.Code == "" && result.OrderID != "" && attempt < 4; attempt++ {
+			if attempt > 0 {
+				select {
+				case <-ctx.Done():
+					return result, ctx.Err()
+				case <-time.After(2 * time.Second):
+				}
+			}
 			code, details := c.GetOrderCode(ctx, result.OrderID)
 			result.Code = code
 			if details != "" {
@@ -329,16 +339,27 @@ func (c *Client) Balance(ctx context.Context, currency string) (float64, error) 
 		"/api/v2/balance",
 	}
 	errors := []string{}
+	notFoundCount := 0
 	for _, path := range uniqueStrings(paths) {
+		if strings.TrimSpace(path) == "" {
+			continue
+		}
 		var raw any
 		if err := c.request(ctx, http.MethodGet, path, nil, &raw); err != nil {
-			errors = append(errors, err.Error())
+			errText := err.Error()
+			if strings.Contains(errText, "404 Not Found") {
+				notFoundCount++
+			}
+			errors = append(errors, errText)
 			continue
 		}
 		if amount, ok := findBalance(raw, currency); ok {
 			return amount, nil
 		}
 		errors = append(errors, "balance not found at "+path+": "+responseSample(raw))
+	}
+	if len(errors) > 0 && notFoundCount == len(errors) {
+		return 0, fmt.Errorf("%w: %s", ErrBalanceUnsupported, strings.Join(errors, " | "))
 	}
 	return 0, fmt.Errorf("kinguin balance check failed: %s", strings.Join(errors, " | "))
 }

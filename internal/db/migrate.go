@@ -58,4 +58,17 @@ create table if not exists restock_waitlist (
 );
 
 create index if not exists restock_waitlist_nominal_idx on restock_waitlist(nominal_code) where notified_at is null;
+
+create table if not exists wallet_balances (
+	currency text primary key,
+	amount numeric(12,2) not null default 0,
+	updated_at timestamptz not null default now()
+);
+
+create table if not exists wallet_debits (
+	order_id bigint primary key references orders(id) on delete cascade,
+	currency text not null,
+	amount numeric(12,2) not null,
+	created_at timestamptz not null default now()
+);
 `

@@ -52,7 +52,7 @@ func (s *ShopService) checkRestocks(ctx context.Context) {
 		if err != nil || quote.Price <= 0 || quote.Qty <= 0 {
 			continue
 		}
-		balance, err := s.kinguin.Balance(ctx, quote.Currency)
+		balance, err := s.repo.WalletBalance(ctx, normalizeCurrency(quote.Currency))
 		if err != nil || balance < quote.Price {
 			continue
 		}
@@ -67,12 +67,22 @@ func (s *ShopService) HandleMessage(ctx context.Context, msg maxapi.MessageUpdat
 	if err != nil {
 		return err
 	}
-	text := strings.TrimSpace(strings.ToLower(msg.Text))
+	rawText := strings.TrimSpace(msg.Text)
+	text := strings.TrimSpace(strings.ToLower(rawText))
 	if strings.HasPrefix(text, "/stats") && s.isAdmin(msg.From.ID) {
 		return s.sendStats(ctx, user.PlatformChatID)
 	}
+	if (text == "/balance" || text == "баланс") && s.isAdmin(msg.From.ID) {
+		return s.sendWalletBalance(ctx, user.PlatformChatID)
+	}
+	if (strings.HasPrefix(text, "/setbalance") || strings.HasPrefix(text, "указать баланс")) && s.isAdmin(msg.From.ID) {
+		return s.setWalletBalance(ctx, user.PlatformChatID, rawText)
+	}
+	if (strings.HasPrefix(text, "/addbalance") || strings.HasPrefix(text, "пополнить баланс")) && s.isAdmin(msg.From.ID) {
+		return s.addWalletBalance(ctx, user.PlatformChatID, rawText)
+	}
 	if strings.HasPrefix(text, "/deliver") && s.isAdmin(msg.From.ID) {
-		return s.deliverKinguinOrder(ctx, user.PlatformChatID, strings.Fields(msg.Text))
+		return s.deliverKinguinOrder(ctx, user.PlatformChatID, strings.Fields(rawText))
 	}
 	return s.sendStart(ctx, user.PlatformChatID)
 }
@@ -133,13 +143,10 @@ func (s *ShopService) CompletePaidOrder(ctx context.Context, orderID int64, paym
 		_ = s.repo.MarkOrderManualWithKinguinOrder(ctx, order.ID, result.OrderID, err.Error())
 		_ = s.notifyAdmins(ctx, "Ошибка Kinguin после оплаты",
 			"Order: "+fmt.Sprint(order.ID),
-			"User: "+order.PlatformUserID,
 			"Nominal: "+order.ProductLabel,
-			"Kinguin product: "+order.KinguinProductID,
-			"Kinguin source price: "+fmt.Sprintf("%.2f %s", order.SourcePrice, order.SourceCurrency),
 			"Kinguin order: "+result.OrderID,
 			"Payment: "+paymentID,
-			"Error: "+err.Error(),
+			"Error: "+shortError(err),
 		)
 		return s.max.SendText(ctx, order.PlatformChatID, "Произошла техническая задержка при генерации кода. Наш менеджер уже проверяет платеж и выдаст код вручную в течение 10 минут.", nil)
 	}
@@ -149,15 +156,15 @@ func (s *ShopService) CompletePaidOrder(ctx context.Context, orderID int64, paym
 			errText += ": " + result.Details
 		}
 		_ = s.repo.MarkOrderManualWithKinguinOrder(ctx, order.ID, result.OrderID, errText)
-		_ = s.notifyAdmins(ctx, "Код Kinguin не найден в ответе",
+		log.Printf("kinguin code not found order=%d kinguin_order=%s details=%s", order.ID, result.OrderID, result.Details)
+		_ = s.notifyAdmins(ctx, "Код Kinguin не найден",
 			"Order: "+fmt.Sprint(order.ID),
 			"Kinguin order: "+result.OrderID,
-			"Kinguin response: "+result.Details,
-			"User: "+order.PlatformUserID,
+			"Action: проверь заказ в Kinguin и отправь /deliver",
 		)
 		return s.max.SendText(ctx, order.PlatformChatID, "Оплата прошла, но код требует ручной проверки. Менеджер выдаст его в течение 10 минут.", nil)
 	}
-	if err := s.repo.MarkOrderSuccess(ctx, order.ID, result.OrderID, result.Code); err != nil {
+	if err := s.markOrderSuccessAndDebit(ctx, order, result.OrderID, result.Code); err != nil {
 		return err
 	}
 	return s.sendGiftCode(ctx, order.PlatformChatID, result.Code)
@@ -202,39 +209,39 @@ func (s *ShopService) createOrder(ctx context.Context, user *models.User, code s
 		log.Printf("kinguin retail lookup returned empty price retail=%s product=%s nominal=%s currency=%s qty=%d", retailID, productID, product.Code, quote.Currency, quote.Qty)
 		return s.max.SendText(ctx, user.PlatformChatID, "Не удалось получить цену товара. Попробуйте позже.", nil)
 	}
-	balance, err := s.kinguin.Balance(ctx, quote.Currency)
+	sourceCurrency := normalizeCurrency(quote.Currency)
+	balance, err := s.repo.WalletBalance(ctx, sourceCurrency)
 	if err != nil {
-		log.Printf("kinguin balance check failed nominal=%s currency=%s price=%.2f: %v", product.Code, quote.Currency, quote.Price, err)
-		_ = s.notifyAdmins(ctx, "Не удалось проверить баланс Kinguin, счет выставлен без проверки баланса",
+		log.Printf("wallet balance check failed nominal=%s currency=%s price=%.2f: %v", product.Code, sourceCurrency, quote.Price, err)
+		_ = s.notifyAdmins(ctx, "Ошибка внутреннего баланса",
 			"Nominal: "+product.Label,
 			"User: "+user.PlatformUserID,
-			"Kinguin product: "+productID,
-			"Needed: "+fmt.Sprintf("%.2f %s", quote.Price, quote.Currency),
-			"Error: "+err.Error(),
+			"Needed: "+fmt.Sprintf("%.2f %s", quote.Price, sourceCurrency),
+			"Error: "+shortError(err),
 		)
+		return s.max.SendText(ctx, user.PlatformChatID, "Не удалось проверить наличие карточки. Повторите попытку позднее.", nil)
 	}
-	if err == nil && balance < quote.Price {
+	if balance < quote.Price {
 		if err := s.repo.AddWaitlist(ctx, user.ID, product.Code, product.Label); err != nil {
 			log.Printf("add waitlist user=%d nominal=%s: %v", user.ID, product.Code, err)
 		}
-		_ = s.notifyAdmins(ctx, "Не хватает баланса Kinguin для продажи",
+		_ = s.notifyAdmins(ctx, "Не хватает внутреннего баланса Kinguin",
 			"Nominal: "+product.Label,
 			"User: "+user.PlatformUserID,
-			"Kinguin product: "+productID,
-			"Needed: "+fmt.Sprintf("%.2f %s", quote.Price, quote.Currency),
-			"Balance: "+fmt.Sprintf("%.2f %s", balance, quote.Currency),
+			"Needed: "+fmt.Sprintf("%.2f %s", quote.Price, sourceCurrency),
+			"Balance: "+fmt.Sprintf("%.2f %s", balance, sourceCurrency),
 		)
 		return s.max.SendText(ctx, user.PlatformChatID, "Данный номинал карточек временно закончился. Повторите попытку позднее, мы напишем вам, когда карточки появятся в продаже.", nil)
 	}
 	_ = s.notifyWaitlistRestocked(ctx, product.Code, product.Label)
-	orderSum := s.calculateRUB(quote.Price, quote.Currency)
+	orderSum := s.calculateRUB(quote.Price, sourceCurrency)
 	order, err := s.repo.CreateOrder(ctx, models.Order{
 		UserID:           user.ID,
 		NominalCode:      product.Code,
 		ProductLabel:     product.Label,
 		KinguinProductID: productID,
 		SourcePrice:      quote.Price,
-		SourceCurrency:   strings.ToUpper(quote.Currency),
+		SourceCurrency:   sourceCurrency,
 		OrderSum:         orderSum,
 		Status:           models.OrderStatusCreated,
 		PaymentProvider:  "tbank",
@@ -294,6 +301,86 @@ func (s *ShopService) sendStats(ctx context.Context, chatID string) error {
 	return s.max.SendText(ctx, chatID, strings.Join(lines, "\n"), nil)
 }
 
+func (s *ShopService) sendWalletBalance(ctx context.Context, chatID string) error {
+	lines := []string{"Внутренний баланс Kinguin:"}
+	for _, currency := range []string{"EUR", "USD"} {
+		amount, err := s.repo.WalletBalance(ctx, currency)
+		if err != nil {
+			return err
+		}
+		lines = append(lines, fmt.Sprintf("%s: %.2f", currency, amount))
+	}
+	lines = append(lines, "", "Команды:", "указать баланс 12.50", "пополнить баланс 5")
+	return s.max.SendText(ctx, chatID, strings.Join(lines, "\n"), nil)
+}
+
+func (s *ShopService) setWalletBalance(ctx context.Context, chatID, text string) error {
+	amount, currency, err := parseWalletAmount(text, []string{"/setbalance", "указать баланс"})
+	if err != nil {
+		return s.max.SendText(ctx, chatID, "Формат: указать баланс 12.50 или /setbalance 12.50 EUR", nil)
+	}
+	current, err := s.repo.SetWalletBalance(ctx, currency, amount)
+	if err != nil {
+		return err
+	}
+	_ = s.notifyRestocksForCurrency(ctx, currency)
+	return s.max.SendText(ctx, chatID, fmt.Sprintf("Баланс Kinguin установлен: %.2f %s", current, currency), nil)
+}
+
+func (s *ShopService) addWalletBalance(ctx context.Context, chatID, text string) error {
+	amount, currency, err := parseWalletAmount(text, []string{"/addbalance", "пополнить баланс"})
+	if err != nil {
+		return s.max.SendText(ctx, chatID, "Формат: пополнить баланс 5 или /addbalance 5 EUR", nil)
+	}
+	current, err := s.repo.AddWalletBalance(ctx, currency, amount)
+	if err != nil {
+		return err
+	}
+	_ = s.notifyRestocksForCurrency(ctx, currency)
+	return s.max.SendText(ctx, chatID, fmt.Sprintf("Баланс Kinguin пополнен на %.2f %s. Сейчас: %.2f %s", amount, currency, current, currency), nil)
+}
+
+func (s *ShopService) notifyRestocksForCurrency(ctx context.Context, currency string) error {
+	for _, product := range s.cfg.Products {
+		quote, err := s.kinguin.ResolveRetailProduct(ctx, product.KinguinRetailID)
+		if err != nil || quote.Price <= 0 || quote.Qty <= 0 || normalizeCurrency(quote.Currency) != currency {
+			continue
+		}
+		balance, err := s.repo.WalletBalance(ctx, currency)
+		if err != nil || balance < quote.Price {
+			continue
+		}
+		if err := s.notifyWaitlistRestocked(ctx, product.Code, product.Label); err != nil {
+			log.Printf("notify restock nominal=%s: %v", product.Code, err)
+		}
+	}
+	return nil
+}
+
+func (s *ShopService) markOrderSuccessAndDebit(ctx context.Context, order *models.Order, kinguinOrderID, code string) error {
+	if err := s.repo.MarkOrderSuccess(ctx, order.ID, kinguinOrderID, code); err != nil {
+		return err
+	}
+	if order.SourcePrice <= 0 || strings.TrimSpace(order.SourceCurrency) == "" {
+		return nil
+	}
+	currency := normalizeCurrency(order.SourceCurrency)
+	balance, debited, err := s.repo.DebitWalletForOrder(ctx, order.ID, currency, order.SourcePrice)
+	if err != nil {
+		log.Printf("wallet debit failed order=%d amount=%.2f %s: %v", order.ID, order.SourcePrice, currency, err)
+		_ = s.notifyAdmins(ctx, "Не списался внутренний баланс",
+			"Order: "+fmt.Sprint(order.ID),
+			"Amount: "+fmt.Sprintf("%.2f %s", order.SourcePrice, currency),
+			"Error: "+shortError(err),
+		)
+		return nil
+	}
+	if debited {
+		log.Printf("wallet debited order=%d amount=%.2f %s balance=%.2f", order.ID, order.SourcePrice, currency, balance)
+	}
+	return nil
+}
+
 func (s *ShopService) deliverKinguinOrder(ctx context.Context, adminChatID string, fields []string) error {
 	if len(fields) < 3 {
 		return s.max.SendText(ctx, adminChatID, "Использование: /deliver <order_id> <kinguin_order_id>", nil)
@@ -310,9 +397,10 @@ func (s *ShopService) deliverKinguinOrder(ctx context.Context, adminChatID strin
 	code, details := s.kinguin.GetOrderCode(ctx, kinguinOrderID)
 	if code == "" {
 		_ = s.repo.MarkOrderManualWithKinguinOrder(ctx, order.ID, kinguinOrderID, "manual deliver failed: "+details)
-		return s.max.SendText(ctx, adminChatID, "Код пока не найден в Kinguin order "+kinguinOrderID+". Ответ: "+details, nil)
+		log.Printf("manual deliver code not found order=%d kinguin_order=%s details=%s", order.ID, kinguinOrderID, details)
+		return s.max.SendText(ctx, adminChatID, "Код пока не найден.\nOrder: "+fmt.Sprint(order.ID)+"\nKinguin order: "+kinguinOrderID, nil)
 	}
-	if err := s.repo.MarkOrderSuccess(ctx, order.ID, kinguinOrderID, code); err != nil {
+	if err := s.markOrderSuccessAndDebit(ctx, order, kinguinOrderID, code); err != nil {
 		return err
 	}
 	if err := s.sendGiftCode(ctx, order.PlatformChatID, code); err != nil {
@@ -394,6 +482,58 @@ func validKinguinProductID(productID string) bool {
 		}
 	}
 	return true
+}
+
+func parseWalletAmount(text string, prefixes []string) (float64, string, error) {
+	lower := strings.ToLower(strings.TrimSpace(text))
+	rest := strings.TrimSpace(text)
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(lower, prefix) {
+			rest = strings.TrimSpace(text[len(prefix):])
+			break
+		}
+	}
+	fields := strings.Fields(rest)
+	if len(fields) == 0 {
+		return 0, "", fmt.Errorf("amount is empty")
+	}
+	rawAmount := strings.NewReplacer(",", ".", "€", "", "$", "").Replace(fields[0])
+	amount, err := strconv.ParseFloat(rawAmount, 64)
+	if err != nil || amount < 0 {
+		return 0, "", fmt.Errorf("invalid amount")
+	}
+	currency := "EUR"
+	if len(fields) > 1 {
+		currency = normalizeCurrency(fields[1])
+	}
+	return amount, currency, nil
+}
+
+func normalizeCurrency(currency string) string {
+	currency = strings.ToUpper(strings.TrimSpace(currency))
+	if currency == "" {
+		return "EUR"
+	}
+	return currency
+}
+
+func shortError(err error) string {
+	if err == nil {
+		return ""
+	}
+	text := strings.TrimSpace(err.Error())
+	if text == "" {
+		return ""
+	}
+	for _, sep := range []string{" | ", "\n", "{", "<html"} {
+		if idx := strings.Index(text, sep); idx > 0 {
+			text = strings.TrimSpace(text[:idx])
+		}
+	}
+	if len(text) > 180 {
+		text = text[:180] + "..."
+	}
+	return text
 }
 
 func (s *ShopService) isAdmin(userID string) bool {
