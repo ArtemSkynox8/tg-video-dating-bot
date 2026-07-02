@@ -13,6 +13,7 @@ type Product struct {
 	Card             string
 	KinguinRetailID  string
 	PriceRUB         float64
+	MaxSourceCostRUB float64
 }
 
 type Config struct {
@@ -85,9 +86,9 @@ func Load() Config {
 
 func loadProducts() []Product {
 	products := []Product{
-		{Code: "400", Label: "400 Robux", Card: "Region Free", KinguinRetailID: firstNonEmptyEnv("ROBLOX_400_KINGUIN_ID", "PRODUCT_400_ROBUX", "107368"), PriceRUB: floatEnv("ROBUX_400_PRICE_RUB", 499)},
-		{Code: "800", Label: "800 Robux", Card: "Region Free", KinguinRetailID: firstNonEmptyEnv("ROBLOX_800_KINGUIN_ID", "PRODUCT_800_ROBUX", "107369"), PriceRUB: floatEnv("ROBUX_800_PRICE_RUB", 899)},
-		{Code: "2000", Label: "2000 Robux", Card: "Region Free", KinguinRetailID: firstNonEmptyEnv("ROBLOX_2000_KINGUIN_ID", "PRODUCT_2000_ROBUX", "107371"), PriceRUB: floatEnv("ROBUX_2000_PRICE_RUB", 2199)},
+		{Code: "400", Label: "400 Robux", Card: "Region Free", KinguinRetailID: firstNonEmptyEnv("ROBLOX_400_KINGUIN_ID", "PRODUCT_400_ROBUX", "107368"), PriceRUB: floatEnv("ROBUX_400_PRICE_RUB", 499), MaxSourceCostRUB: floatEnv("KINGUIN_MAX_COST_400_RUB", 650)},
+		{Code: "800", Label: "800 Robux", Card: "Region Free", KinguinRetailID: firstNonEmptyEnv("ROBLOX_800_KINGUIN_ID", "PRODUCT_800_ROBUX", "107369"), PriceRUB: floatEnv("ROBUX_800_PRICE_RUB", 899), MaxSourceCostRUB: floatEnv("KINGUIN_MAX_COST_800_RUB", 1200)},
+		{Code: "2000", Label: "2000 Robux", Card: "Region Free", KinguinRetailID: firstNonEmptyEnv("ROBLOX_2000_KINGUIN_ID", "PRODUCT_2000_ROBUX", "107371"), PriceRUB: floatEnv("ROBUX_2000_PRICE_RUB", 2199), MaxSourceCostRUB: floatEnv("KINGUIN_MAX_COST_2000_RUB", 2600)},
 	}
 	return products
 }

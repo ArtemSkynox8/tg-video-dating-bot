@@ -53,6 +53,9 @@ func (s *ShopService) checkRestocks(ctx context.Context) {
 		if err != nil || quote.Price <= 0 || quote.Qty <= 0 {
 			continue
 		}
+		if product.MaxSourceCostRUB > 0 && s.sourceCostRUB(quote.Price, normalizeCurrency(quote.Currency)) > product.MaxSourceCostRUB {
+			continue
+		}
 		balance, err := s.repo.WalletBalance(ctx, normalizeCurrency(quote.Currency))
 		if err != nil || balance < quote.Price {
 			continue
@@ -272,6 +275,19 @@ func (s *ShopService) createOrder(ctx context.Context, user *models.User, code s
 		return s.max.SendText(ctx, user.PlatformChatID, "Не удалось получить цену товара. Попробуйте позже.", nil)
 	}
 	sourceCurrency := normalizeCurrency(quote.Currency)
+	sourceCostRUB := s.sourceCostRUB(quote.Price, sourceCurrency)
+	if product.MaxSourceCostRUB > 0 && sourceCostRUB > product.MaxSourceCostRUB {
+		if err := s.repo.AddWaitlist(ctx, user.ID, product.Code, product.Label); err != nil {
+			log.Printf("add waitlist user=%d nominal=%s: %v", user.ID, product.Code, err)
+		}
+		log.Printf("kinguin source price blocked nominal=%s product=%s price=%.2f %s cost_rub=%.0f limit_rub=%.0f", product.Code, productID, quote.Price, sourceCurrency, sourceCostRUB, product.MaxSourceCostRUB)
+		_ = s.notifyAdmins(ctx, "Kinguin цена выше лимита",
+			"Nominal: "+product.Label,
+			"Cost: "+fmt.Sprintf("%.0f/%.0f руб.", sourceCostRUB, product.MaxSourceCostRUB),
+			"Source: "+fmt.Sprintf("%.2f %s", quote.Price, sourceCurrency),
+		)
+		return s.max.SendText(ctx, user.PlatformChatID, "Данный номинал карточек временно закончился. Повторите попытку позднее, мы напишем вам, когда карточки появятся в продаже.", nil)
+	}
 	balance, err := s.repo.WalletBalance(ctx, sourceCurrency)
 	if err != nil {
 		log.Printf("wallet balance check failed nominal=%s currency=%s price=%.2f: %v", product.Code, sourceCurrency, quote.Price, err)
@@ -330,14 +346,7 @@ func (s *ShopService) createOrder(ctx context.Context, user *models.User, code s
 }
 
 func (s *ShopService) calculateRUB(price float64, currency string) float64 {
-	rate := s.cfg.USDRUBRate
-	switch strings.ToUpper(currency) {
-	case "EUR":
-		rate = s.cfg.EURRUBRate
-	case "RUB":
-		rate = 1
-	}
-	base := price * rate
+	base := s.sourceCostRUB(price, currency)
 	margin := s.cfg.FixedFeeRUB
 	if s.cfg.MarkupPercent > 0 {
 		percentMargin := base * s.cfg.MarkupPercent / 100
@@ -353,6 +362,17 @@ func (s *ShopService) calculateRUB(price float64, currency string) float64 {
 		sum = sum / (1 - s.cfg.AcquiringFeePercent/100)
 	}
 	return roundUpToNine(sum)
+}
+
+func (s *ShopService) sourceCostRUB(price float64, currency string) float64 {
+	rate := s.cfg.USDRUBRate
+	switch strings.ToUpper(currency) {
+	case "EUR":
+		rate = s.cfg.EURRUBRate
+	case "RUB":
+		rate = 1
+	}
+	return price * rate
 }
 
 func roundUpToNine(sum float64) float64 {
