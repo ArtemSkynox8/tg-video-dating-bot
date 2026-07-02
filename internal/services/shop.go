@@ -53,7 +53,7 @@ func (s *ShopService) checkRestocks(ctx context.Context) {
 		if err != nil || quote.Price <= 0 || quote.Qty <= 0 {
 			continue
 		}
-		if product.MaxSourceCostRUB > 0 && s.sourceCostRUB(quote.Price, normalizeCurrency(quote.Currency)) > product.MaxSourceCostRUB {
+		if product.MaxKinguinPriceUSD > 0 && s.sourcePriceUSD(quote.Price, normalizeCurrency(quote.Currency)) > product.MaxKinguinPriceUSD {
 			continue
 		}
 		balance, err := s.repo.WalletBalance(ctx, normalizeCurrency(quote.Currency))
@@ -275,15 +275,15 @@ func (s *ShopService) createOrder(ctx context.Context, user *models.User, code s
 		return s.max.SendText(ctx, user.PlatformChatID, "Не удалось получить цену товара. Попробуйте позже.", nil)
 	}
 	sourceCurrency := normalizeCurrency(quote.Currency)
-	sourceCostRUB := s.sourceCostRUB(quote.Price, sourceCurrency)
-	if product.MaxSourceCostRUB > 0 && sourceCostRUB > product.MaxSourceCostRUB {
+	sourcePriceUSD := s.sourcePriceUSD(quote.Price, sourceCurrency)
+	if product.MaxKinguinPriceUSD > 0 && sourcePriceUSD > product.MaxKinguinPriceUSD {
 		if err := s.repo.AddWaitlist(ctx, user.ID, product.Code, product.Label); err != nil {
 			log.Printf("add waitlist user=%d nominal=%s: %v", user.ID, product.Code, err)
 		}
-		log.Printf("kinguin source price blocked nominal=%s product=%s price=%.2f %s cost_rub=%.0f limit_rub=%.0f", product.Code, productID, quote.Price, sourceCurrency, sourceCostRUB, product.MaxSourceCostRUB)
-		_ = s.notifyAdmins(ctx, "Kinguin цена выше лимита",
+		log.Printf("kinguin source price blocked nominal=%s product=%s price=%.2f %s price_usd=%.2f limit_usd=%.2f", product.Code, productID, quote.Price, sourceCurrency, sourcePriceUSD, product.MaxKinguinPriceUSD)
+		_ = s.notifyAdmins(ctx, "Kinguin price over limit",
 			"Nominal: "+product.Label,
-			"Cost: "+fmt.Sprintf("%.0f/%.0f руб.", sourceCostRUB, product.MaxSourceCostRUB),
+			"Kinguin: "+fmt.Sprintf("%.2f/%.2f USD", sourcePriceUSD, product.MaxKinguinPriceUSD),
 			"Source: "+fmt.Sprintf("%.2f %s", quote.Price, sourceCurrency),
 		)
 		return s.max.SendText(ctx, user.PlatformChatID, "Данный номинал карточек временно закончился. Повторите попытку позднее, мы напишем вам, когда карточки появятся в продаже.", nil)
@@ -373,6 +373,23 @@ func (s *ShopService) sourceCostRUB(price float64, currency string) float64 {
 		rate = 1
 	}
 	return price * rate
+}
+
+func (s *ShopService) sourcePriceUSD(price float64, currency string) float64 {
+	switch strings.ToUpper(currency) {
+	case "EUR":
+		if s.cfg.USDRUBRate <= 0 {
+			return price
+		}
+		return price * s.cfg.EURRUBRate / s.cfg.USDRUBRate
+	case "RUB":
+		if s.cfg.USDRUBRate <= 0 {
+			return price
+		}
+		return price / s.cfg.USDRUBRate
+	default:
+		return price
+	}
 }
 
 func roundUpToNine(sum float64) float64 {
