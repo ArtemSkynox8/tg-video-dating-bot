@@ -69,3 +69,10 @@ type EventStat struct {
 	Name  string
 	Count int64
 }
+
+type AdStat struct {
+	Tag     string
+	Users   int64
+	Paid    int64
+	Revenue float64
+}

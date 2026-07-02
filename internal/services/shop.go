@@ -460,16 +460,33 @@ func (s *ShopService) sendBotStats(ctx context.Context, chatID string) error {
 }
 
 func (s *ShopService) sendAdStats(ctx context.Context, chatID, tag string) error {
-	events, err := s.repo.EventStats(ctx, tag)
+	tag = strings.TrimSpace(tag)
+	if tag != "" {
+		stat, err := s.repo.AdStats(ctx, tag)
+		if err != nil {
+			return err
+		}
+		lines := []string{"Статистика по метке: " + tag}
+		lines = append(lines, formatAdStat(stat)...)
+		return s.max.SendText(ctx, chatID, strings.Join(lines, "\n"), nil)
+	}
+	total, err := s.repo.AdStats(ctx, "")
 	if err != nil {
 		return err
 	}
-	title := "Статистика по всем меткам"
-	if strings.TrimSpace(tag) != "" {
-		title = "Статистика по метке: " + strings.TrimSpace(tag)
+	items, err := s.repo.AdStatsByTag(ctx)
+	if err != nil {
+		return err
 	}
-	lines := []string{title}
-	lines = append(lines, formatEventStats(events)...)
+	lines := []string{"Статистика по всем меткам"}
+	lines = append(lines, formatAdStat(total)...)
+	if len(items) > 0 {
+		lines = append(lines, "", "По меткам:")
+		for _, item := range items {
+			lines = append(lines, "", "Метка: "+item.Tag)
+			lines = append(lines, formatAdStat(item)...)
+		}
+	}
 	return s.max.SendText(ctx, chatID, strings.Join(lines, "\n"), nil)
 }
 
@@ -718,6 +735,21 @@ func (s *ShopService) notifyFunnelEvent(ctx context.Context, user *models.User, 
 		"Reason: "+reason,
 		"Type: "+eventType,
 	)
+}
+
+func formatAdStat(item models.AdStat) []string {
+	conversion := 0.0
+	arpu := 0.0
+	if item.Users > 0 {
+		conversion = float64(item.Paid) / float64(item.Users) * 100
+		arpu = item.Revenue / float64(item.Users)
+	}
+	return []string{
+		"💳 Оплатили: " + strconv.FormatInt(item.Paid, 10),
+		fmt.Sprintf("📈 Конверсия: %.2f%%", conversion),
+		fmt.Sprintf("💰 Выручка: %.0f ₽", item.Revenue),
+		fmt.Sprintf("📊 ARPU: %.2f ₽", arpu),
+	}
 }
 
 func formatEventStats(items []models.EventStat) []string {

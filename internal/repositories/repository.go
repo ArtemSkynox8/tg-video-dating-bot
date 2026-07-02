@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/ArtemSkynox8/tg-video-dating-bot/internal/models"
@@ -270,6 +271,72 @@ func (r *Repository) EventStats(ctx context.Context, tag string) ([]models.Event
 		out = append(out, item)
 	}
 	return out, rows.Err()
+}
+
+func (r *Repository) AdStats(ctx context.Context, tag string) (models.AdStat, error) {
+	tag = strings.TrimSpace(tag)
+	out := models.AdStat{Tag: tag}
+	args := []any{}
+	userFilter := ``
+	eventFilter := `where user_id is not null`
+	if tag != "" {
+		userFilter = `where coalesce(nullif(ad_tag, ''), 'direct')=$1`
+		eventFilter = `where coalesce(nullif(ad_tag, ''), 'direct')=$1 and user_id is not null`
+		args = append(args, tag)
+	}
+	query := `
+		with tagged_users as (
+			select id from users ` + userFilter + `
+			union
+			select user_id from user_events ` + eventFilter + `
+		),
+		paid_orders as (
+			select o.user_id, o.order_sum
+			from orders o join tagged_users tu on tu.id=o.user_id
+			where o.status in ($` + strconv.Itoa(len(args)+1) + `,$` + strconv.Itoa(len(args)+2) + `,$` + strconv.Itoa(len(args)+3) + `)
+		)
+		select
+			(select count(*) from tagged_users),
+			(select count(distinct user_id) from paid_orders),
+			coalesce((select sum(order_sum) from paid_orders), 0)`
+	args = append(args, models.OrderStatusPaid, models.OrderStatusSuccess, models.OrderStatusManual)
+	err := r.db.QueryRow(ctx, query, args...).Scan(&out.Users, &out.Paid, &out.Revenue)
+	return out, err
+}
+
+func (r *Repository) AdStatsByTag(ctx context.Context) ([]models.AdStat, error) {
+	rows, err := r.db.Query(ctx, `
+		select tag from (
+			select distinct coalesce(nullif(ad_tag, ''), 'direct') as tag from users
+			union
+			select distinct coalesce(nullif(ad_tag, ''), 'direct') as tag from user_events
+		) t
+		where tag <> ''
+		order by tag`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	tags := []string{}
+	for rows.Next() {
+		var tag string
+		if err := rows.Scan(&tag); err != nil {
+			return nil, err
+		}
+		tags = append(tags, tag)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]models.AdStat, 0, len(tags))
+	for _, tag := range tags {
+		item, err := r.AdStats(ctx, tag)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, nil
 }
 
 func (r *Repository) ChoiceStats(ctx context.Context) ([]models.EventStat, error) {
