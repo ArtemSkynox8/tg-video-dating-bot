@@ -296,7 +296,7 @@ func (s *ShopService) createOrder(ctx context.Context, user *models.User, code s
 			fmt.Sprintf("Из-за высокого спроса цена на %s сейчас выросла.\n\nМожно вернуться позже: когда спрос спадет, цена снизится. Либо купить сейчас по текущей цене: %.0f руб.", product.Label, currentSum),
 			[][]maxapi.Button{
 				{{Text: fmt.Sprintf("Купить сейчас за %.0f руб.", currentSum), Payload: "nominal_force:" + product.Code}},
-				{{Text: "Вернуться позже", Payload: "buy"}},
+				{{Text: "Выбрать другую", Payload: "buy"}},
 			})
 	}
 	balance, err := s.repo.WalletBalance(ctx, sourceCurrency)
