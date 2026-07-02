@@ -337,7 +337,18 @@ func (s *ShopService) calculateRUB(price float64, currency string) float64 {
 	case "RUB":
 		rate = 1
 	}
-	sum := price*rate + s.cfg.FixedFeeRUB + s.cfg.DynamicMarginRUB
+	base := price * rate
+	margin := s.cfg.FixedFeeRUB
+	if s.cfg.MarkupPercent > 0 {
+		percentMargin := base * s.cfg.MarkupPercent / 100
+		if s.cfg.DynamicMarginRUB > 0 && percentMargin > s.cfg.DynamicMarginRUB {
+			percentMargin = s.cfg.DynamicMarginRUB
+		}
+		margin += percentMargin
+	} else {
+		margin += s.cfg.DynamicMarginRUB
+	}
+	sum := base + margin
 	if s.cfg.AcquiringFeePercent > 0 && s.cfg.AcquiringFeePercent < 100 {
 		sum = sum / (1 - s.cfg.AcquiringFeePercent/100)
 	}
