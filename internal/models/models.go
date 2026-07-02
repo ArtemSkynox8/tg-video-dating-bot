@@ -46,11 +46,14 @@ type Order struct {
 }
 
 type ProductQuote struct {
-	ProductID string
-	Name      string
-	Price     float64
-	Currency  string
-	Qty       int
+	ProductID   string
+	Name        string
+	Description string
+	ItemType    string
+	Region      string
+	Price       float64
+	Currency    string
+	Qty         int
 }
 
 type WaitlistEntry struct {

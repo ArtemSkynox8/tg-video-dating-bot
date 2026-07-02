@@ -158,11 +158,14 @@ func quoteFromRaw(productID string, raw map[string]any) models.ProductQuote {
 	currency := firstString(raw["currency"], raw["priceCurrency"], raw["curr"], priceMap["currency"], offer["currency"], "EUR")
 	qty := int(firstFloat(raw["qty"], raw["quantity"], raw["stock"], raw["availableQty"], raw["available"], raw["inStock"], offer["qty"], offer["quantity"], offer["stock"]))
 	return models.ProductQuote{
-		ProductID: firstString(raw["id"], raw["productId"], productID),
-		Name:      firstString(raw["name"], raw["title"]),
-		Price:     price,
-		Currency:  currency,
-		Qty:       qty,
+		ProductID:   firstString(raw["id"], raw["productId"], productID),
+		Name:        firstString(raw["name"], raw["title"]),
+		Description: firstString(raw["description"], raw["shortDescription"], raw["desc"]),
+		ItemType:    firstString(raw["itemType"], raw["type"], raw["productType"], offer["itemType"], offer["type"]),
+		Region:      firstString(raw["regionalLimitations"], raw["region"], raw["regions"], raw["regionName"], raw["activationRegion"], offer["regionalLimitations"], offer["region"]),
+		Price:       price,
+		Currency:    currency,
+		Qty:         qty,
 	}
 }
 

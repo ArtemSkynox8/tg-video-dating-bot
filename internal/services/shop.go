@@ -6,6 +6,7 @@ import (
 	"log"
 	"math"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -252,6 +253,15 @@ func (s *ShopService) createOrder(ctx context.Context, user *models.User, code s
 	if err != nil {
 		log.Printf("kinguin retail lookup failed retail=%s nominal=%s: %v", retailID, product.Code, err)
 		return s.max.SendText(ctx, user.PlatformChatID, "Не удалось проверить актуальную цену. Попробуйте позже.", nil)
+	}
+	if ok, reason := safeKinguinProduct(quote); !ok {
+		log.Printf("kinguin product blocked retail=%s nominal=%s product=%s name=%q type=%q region=%q reason=%s", retailID, product.Code, quote.ProductID, quote.Name, quote.ItemType, quote.Region, reason)
+		_ = s.notifyAdmins(ctx, "Kinguin товар заблокирован фильтром",
+			"Nominal: "+product.Label,
+			"Product: "+quote.ProductID,
+			"Reason: "+reason,
+		)
+		return s.max.SendText(ctx, user.PlatformChatID, "Товар обновляется, пожалуйста, попробуйте через пару минут.", nil)
 	}
 	productID := quote.ProductID
 	if quote.Qty <= 0 {
@@ -707,6 +717,47 @@ func validKinguinProductID(productID string) bool {
 		}
 	}
 	return true
+}
+
+func safeKinguinProduct(quote models.ProductQuote) (bool, string) {
+	name := strings.ToLower(strings.TrimSpace(quote.Name))
+	description := strings.ToLower(strings.TrimSpace(quote.Description))
+	combined := name + " " + description
+	itemType := strings.ToUpper(strings.TrimSpace(quote.ItemType))
+	region := strings.ToLower(strings.TrimSpace(quote.Region))
+
+	if itemType == "TOPUP" {
+		return false, "topup item type"
+	}
+	for _, phrase := range []string{"top-up", "top up", "direct topup", "direct top-up", "account"} {
+		if strings.Contains(combined, phrase) {
+			return false, "blocked phrase: " + phrase
+		}
+	}
+	for _, code := range []string{"us", "usa", "eu", "europe", "uk", "united kingdom", "de", "fr", "nz", "au", "ca", "gb"} {
+		if hasRegionWord(combined, code) {
+			return false, "blocked region: " + code
+		}
+	}
+
+	if itemType != "" && itemType != "KEY" && itemType != "ECARD" {
+		return false, "unsupported item type: " + itemType
+	}
+	isGlobal := strings.Contains(region, "global") ||
+		strings.Contains(region, "free") ||
+		strings.Contains(region, "row") ||
+		strings.Contains(name, "global") ||
+		strings.Contains(name, "region free") ||
+		strings.Contains(name, "region-free")
+	if !isGlobal {
+		return false, "region is not global"
+	}
+	return true, ""
+}
+
+func hasRegionWord(text, word string) bool {
+	pattern := `(?i)\b` + regexp.QuoteMeta(word) + `\b`
+	return regexp.MustCompile(pattern).MatchString(text)
 }
 
 func parseWalletAmount(text string, prefixes []string) (float64, string, error) {

@@ -350,7 +350,8 @@ func (r *Repository) PushStats(ctx context.Context) (string, error) {
 
 func (r *Repository) RecentPayments(ctx context.Context, limit int) ([]string, error) {
 	rows, err := r.db.Query(ctx, `
-		select id, product_label, order_sum, status, coalesce(payment_id, ''), created_at
+		select id, product_label, order_sum, status, coalesce(payment_id, ''),
+			coalesce(kinguin_product_id, ''), source_price, source_currency
 		from orders
 		where payment_id is not null
 		order by updated_at desc
@@ -362,13 +363,12 @@ func (r *Repository) RecentPayments(ctx context.Context, limit int) ([]string, e
 	out := []string{}
 	for rows.Next() {
 		var id int64
-		var label, status, paymentID string
-		var sum float64
-		var created any
-		if err := rows.Scan(&id, &label, &sum, &status, &paymentID, &created); err != nil {
+		var label, status, paymentID, kinguinProductID, sourceCurrency string
+		var sum, sourcePrice float64
+		if err := rows.Scan(&id, &label, &sum, &status, &paymentID, &kinguinProductID, &sourcePrice, &sourceCurrency); err != nil {
 			return nil, err
 		}
-		out = append(out, fmt.Sprintf("#%d %s %.0f руб. %s payment=%s", id, label, sum, status, paymentID))
+		out = append(out, fmt.Sprintf("#%d %s %.0f руб. %s cost=%.2f %s product=%s payment=%s", id, label, sum, status, sourcePrice, sourceCurrency, kinguinProductID, paymentID))
 	}
 	return out, rows.Err()
 }

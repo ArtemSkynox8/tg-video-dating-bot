@@ -5,7 +5,7 @@ Go-сервер для MAX-бота, который продает Roblox Gift C
 ## Что умеет
 
 - Стартовое меню в MAX.
-- Кнопки номиналов: 200, 400, 700, 800, 2000 Robux.
+- Кнопки номиналов: 400, 800, 2000 Robux. Остальные номиналы временно отключены.
 - Проверка наличия и цены товара в Kinguin.
 - Расчет цены в рублях с курсом и наценкой.
 - Создание платежной ссылки T-Банка.
@@ -28,7 +28,7 @@ cp .env.example .env
 - `MAX_WEBHOOK_SECRET` - секрет webhook.
 - `PUBLIC_BASE_URL` - публичный HTTPS-адрес сервера.
 - `KINGUIN_API_KEY` - API-ключ Kinguin.
-- `ROBLOX_200_KINGUIN_ID`, `ROBLOX_400_KINGUIN_ID`, `ROBLOX_700_KINGUIN_ID`, `ROBLOX_800_KINGUIN_ID`, `ROBLOX_2000_KINGUIN_ID` - розничные `kinguinId`; бот сам найдет API Product ID в каталоге Kinguin.
+- `ROBLOX_400_KINGUIN_ID`, `ROBLOX_800_KINGUIN_ID`, `ROBLOX_2000_KINGUIN_ID` - розничные `kinguinId`; бот сам найдет API Product ID в каталоге Kinguin.
 - `TBANK_TERMINAL_KEY`, `TBANK_PASSWORD` - платежные доступы T-Банка.
 - `ADMIN_PLATFORM_IDS` - ID админов через запятую.
 
