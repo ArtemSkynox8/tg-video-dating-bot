@@ -149,7 +149,12 @@ func (s *ShopService) HandleCallback(ctx context.Context, cb maxapi.CallbackUpda
 		code := strings.TrimPrefix(cb.Payload, "nominal:")
 		_ = s.recordUserEvent(ctx, user, "nominal_selected", code)
 		_ = s.notifyFunnelEvent(ctx, user, "Nominal selected", code, "button")
-		return s.createOrder(ctx, user, code)
+		return s.createOrder(ctx, user, code, false)
+	case strings.HasPrefix(cb.Payload, "nominal_force:"):
+		code := strings.TrimPrefix(cb.Payload, "nominal_force:")
+		_ = s.recordUserEvent(ctx, user, "overpriced_accepted", code)
+		_ = s.notifyFunnelEvent(ctx, user, "Overpriced accepted", code, "button")
+		return s.createOrder(ctx, user, code, true)
 	default:
 		return s.sendStart(ctx, user.PlatformChatID)
 	}
@@ -240,7 +245,7 @@ func (s *ShopService) sendNominals(ctx context.Context, chatID string) error {
 	return s.max.SendText(ctx, chatID, "Выберите номинал: точную цену посчитаем перед оплатой.", rows)
 }
 
-func (s *ShopService) createOrder(ctx context.Context, user *models.User, code string) error {
+func (s *ShopService) createOrder(ctx context.Context, user *models.User, code string, allowOverpriced bool) error {
 	product, ok := s.productByCode(code)
 	if !ok {
 		return s.max.SendText(ctx, user.PlatformChatID, "Этот номинал пока не настроен.", nil)
@@ -276,7 +281,7 @@ func (s *ShopService) createOrder(ctx context.Context, user *models.User, code s
 	}
 	sourceCurrency := normalizeCurrency(quote.Currency)
 	sourcePriceUSD := s.sourcePriceUSD(quote.Price, sourceCurrency)
-	if product.MaxKinguinPriceUSD > 0 && sourcePriceUSD > product.MaxKinguinPriceUSD {
+	if !allowOverpriced && product.MaxKinguinPriceUSD > 0 && sourcePriceUSD > product.MaxKinguinPriceUSD {
 		if err := s.repo.AddWaitlist(ctx, user.ID, product.Code, product.Label); err != nil {
 			log.Printf("add waitlist user=%d nominal=%s: %v", user.ID, product.Code, err)
 		}
@@ -286,7 +291,13 @@ func (s *ShopService) createOrder(ctx context.Context, user *models.User, code s
 			"Kinguin: "+fmt.Sprintf("%.2f/%.2f USD", sourcePriceUSD, product.MaxKinguinPriceUSD),
 			"Source: "+fmt.Sprintf("%.2f %s", quote.Price, sourceCurrency),
 		)
-		return s.max.SendText(ctx, user.PlatformChatID, "Данный номинал карточек временно закончился. Повторите попытку позднее, мы напишем вам, когда карточки появятся в продаже.", nil)
+		currentSum := s.calculateRUB(quote.Price, sourceCurrency)
+		return s.max.SendText(ctx, user.PlatformChatID,
+			fmt.Sprintf("Из-за высокого спроса цена на %s сейчас выросла.\n\nМожно вернуться позже: когда спрос спадет, цена снизится. Либо купить сейчас по текущей цене: %.0f руб.", product.Label, currentSum),
+			[][]maxapi.Button{
+				{{Text: fmt.Sprintf("Купить сейчас за %.0f руб.", currentSum), Payload: "nominal_force:" + product.Code}},
+				{{Text: "Вернуться позже", Payload: "buy"}},
+			})
 	}
 	balance, err := s.repo.WalletBalance(ctx, sourceCurrency)
 	if err != nil {
